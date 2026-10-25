@@ -66,8 +66,8 @@ func TestPrivilegesLive(t *testing.T) {
 	if with == 0 || dailyWith == 0 {
 		t.Fatal("no privileges")
 	}
-	u, size, err := SongURL(2652820720, "exhigh")
-	if err != nil || u == "" || size == 0 {
-		t.Fatalf("url %q %d %v", u, size, err)
+	st, err := SongURL(2652820720, "exhigh")
+	if err != nil || st.URL == "" || st.Size == 0 || st.Type != "mp3" {
+		t.Fatalf("stream %+v %v", st, err)
 	}
 }

@@ -83,6 +83,7 @@ func (a *app) nowPlayingView(c *ui.Context) {
 
 func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, accent ui.Color, w, h float32) {
 	pl := a.pl
+	a.commentsFor(tr)
 	if a.npPane != paneQueue {
 		a.queueAt = -1
 	}
@@ -124,6 +125,9 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(36, 0, 18, 0).Children(func() {
 					ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(func() {
+						if r := pl.Radio(); r != "" {
+							radioChip(c, r)
+						}
 						ui.Text(c, tr.Name).FontSize(22).FontWeight(700).LetterSpacing(-0.3).SingleLine()
 						ui.Text(c, tr.ArtistNames()+" — "+tr.Album.Name).FontSize(15).TextColor(white.Alpha(0.6)).SingleLine()
 					})
@@ -132,6 +136,8 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 				a.scrubber(c.Key("np-scrub"), &a.npScrub, white.Alpha(0.18), white.Alpha(0.9), 16, accent.Mix(white, 0.35))
 				ui.Row(c).Children(func() {
 					ui.Text(c, clock(pl.Position())).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.5))
+					ui.Spacer(c)
+					qualityBadge(c, pl.Stream())
 					ui.Spacer(c)
 					status := "-" + clock(pl.Duration()-pl.Position())
 					if pl.Loading() {
@@ -149,9 +155,12 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Children(func() {
 				ui.Row(c).Gap(6).Margin(0, 0, 8, 0).Children(func() { a.paneTabs(c) })
-				if a.npPane == paneLyrics {
+				switch a.npPane {
+				case paneLyrics:
 					a.lyricsPane(c, tr, h)
-				} else {
+				case paneComments:
+					a.commentsPane(c, tr)
+				default:
 					a.queuePane(c)
 				}
 			})
@@ -172,12 +181,39 @@ const (
 	paneLyrics = iota
 	paneQueue
 	paneStage
+	paneComments
 )
 
 func (a *app) paneTabs(c *ui.Context) {
 	a.paneTab(c, paneLyrics, "歌词")
 	a.paneTab(c, paneStage, "律动")
 	a.paneTab(c, paneQueue, "待播清单")
+	a.paneTab(c, paneComments, a.commentsTab())
+}
+
+// radioChip says which radio plays, over the title.
+func radioChip(c *ui.Context, name string) {
+	icon := iconRadio
+	if name == heartRadio {
+		icon = iconHeartFill
+	}
+	ui.Row(c).Gap(5).AlignItems(ui.Center).Margin(0, 0, 4, 0).TextColor(white.Alpha(0.6)).Children(func() {
+		ui.Icon(c, icon).Size(12, 12)
+		ui.Text(c, radioLabel(name)).FontSize(11.5).FontWeight(700).LetterSpacing(0.3)
+	})
+}
+
+// qualityBadge marks a lossless stream, as it plays.
+func qualityBadge(c *ui.Context, st *netease.Stream) {
+	if st == nil || !netease.Lossless(st.Level) {
+		return
+	}
+	label := "无损"
+	if st.Level == "hires" {
+		label = "Hi-Res"
+	}
+	ui.Text(c, label).FontSize(9.5).FontWeight(800).LetterSpacing(0.6).TextColor(ui.Hex("#f5d58a")).
+		Padding(1, 6).Radius(4).Border(1, ui.Hex("#f5d58a").Alpha(0.55))
 }
 
 // stageBar is the slim bar along the foot of the stage: what plays, where
@@ -206,7 +242,7 @@ func (a *app) stageBar(c *ui.Context, tr *netease.Track, art *artwork, accent ui
 }
 
 func (a *app) paneTab(c *ui.Context, i int, label string) {
-	b := ui.ButtonBase(c.Key(label)).Padding(6, 14).Radius(999).FocusRing(false)
+	b := ui.ButtonBase(c.Key(i)).Padding(6, 14).Radius(999).FocusRing(false)
 	bg, fg := ui.Transparent, white.Alpha(0.55)
 	if a.npPane == i {
 		bg, fg = white.Alpha(0.14), white
@@ -217,7 +253,7 @@ func (a *app) paneTab(c *ui.Context, i int, label string) {
 	b.Children(func() { ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(fg) })
 	if b.Clicked() {
 		a.npPane = i
-		if i != paneQueue && a.settings.LyricsStage != (i == paneStage) {
+		if (i == paneLyrics || i == paneStage) && a.settings.LyricsStage != (i == paneStage) {
 			a.settings.LyricsStage = i == paneStage
 			a.settings.save()
 		}

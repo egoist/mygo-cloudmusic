@@ -310,36 +310,69 @@ func Search(query string, limit int) ([]Track, error) {
 
 var ErrUnavailable = errors.New("this song isn't available to stream")
 
-// SongURL returns where to stream a track's MP3 and its size in bytes, at
-// level (standard, higher or exhigh) or the best below it the listener may
-// play. It goes through
+// Stream is where a track streams from, and what it is.
+type Stream struct {
+	URL  string `json:"-"`
+	Size int64  `json:"size"` // in bytes
+	// Type is the format: mp3, or flac for the lossless levels.
+	Type string `json:"type"`
+	// Level is the level served, which may be below the one asked for.
+	Level string `json:"level"`
+	// Gain is how many dB to change the track by to sound as loud as
+	// others, and Peak its loudest sample, 1 at full scale, or 0 if
+	// unknown.
+	Gain float64 `json:"gain"`
+	Peak float64 `json:"peak"`
+}
+
+// Levels are the stream levels, from the lowest.
+var Levels = []string{"standard", "higher", "exhigh", "lossless", "hires"}
+
+// Lossless reports whether level streams FLAC.
+func Lossless(level string) bool { return level == "lossless" || level == "hires" }
+
+// SongURL returns where to stream a track, MP3 or FLAC, at level (one of
+// Levels) or the best below it the listener may play. It goes through
 // the eapi, which carries the session, so VIP songs play for subscribers.
-func SongURL(id int64, level string) (string, int64, error) {
+func SongURL(id int64, level string) (*Stream, error) {
 	var res struct {
 		Code int `json:"code"`
 		Data []struct {
+			Stream
 			URL           string          `json:"url"`
-			Size          int64           `json:"size"`
-			Type          string          `json:"type"`
+			Peak          *float64        `json:"peak"`
 			FreeTrialInfo json.RawMessage `json:"freeTrialInfo"`
 		} `json:"data"`
 	}
-	data := map[string]any{"ids": fmt.Sprintf("[%d]", id), "level": level, "encodeType": "mp3"}
+	encode := "mp3"
+	if Lossless(level) {
+		encode = "flac"
+	}
+	data := map[string]any{"ids": fmt.Sprintf("[%d]", id), "level": level, "encodeType": encode}
 	if err := eapiPost("/api/song/enhance/player/url/v1", data, &res); err != nil {
-		return "", 0, err
+		return nil, err
 	}
 	if len(res.Data) == 0 || res.Data[0].URL == "" {
-		return "", 0, ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	d := res.Data[0]
 	// A preview of a VIP song is no song.
 	if len(d.FreeTrialInfo) > 0 && string(d.FreeTrialInfo) != "null" {
-		return "", 0, ErrUnavailable
+		return nil, ErrUnavailable
 	}
-	if d.Type != "" && !strings.EqualFold(d.Type, "mp3") {
-		return "", 0, fmt.Errorf("unsupported format %s", d.Type)
+	s := d.Stream
+	s.Type = strings.ToLower(s.Type)
+	if s.Type != "" && s.Type != "mp3" && s.Type != "flac" {
+		return nil, fmt.Errorf("unsupported format %s", s.Type)
 	}
-	return strings.Replace(d.URL, "http://", "https://", 1), d.Size, nil
+	if d.Peak != nil {
+		s.Peak = *d.Peak
+	}
+	if s.Level == "" {
+		s.Level = level
+	}
+	s.URL = strings.Replace(d.URL, "http://", "https://", 1)
+	return &s, nil
 }
 
 // Lyrics returns a track's timed lyrics, their translation if any, and

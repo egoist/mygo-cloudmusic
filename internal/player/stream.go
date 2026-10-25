@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/egoist/mygo/audio"
 	gomp3 "github.com/hajimehoshi/go-mp3"
 
 	"netease-music-mygo/internal/netease"
@@ -25,16 +26,28 @@ type download struct {
 	done   bool
 	err    error
 	cancel context.CancelFunc
+	// whole, if set, takes the song once it has all come in.
+	whole func([]byte)
 }
 
-func startDownload(url string, size int64) *download {
+// startDownload fetches url, of size bytes if known, and gives whole the
+// song once it has all come in.
+func startDownload(url string, size int64, whole func([]byte)) *download {
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &download{size: size, cancel: cancel}
+	d := &download{size: size, cancel: cancel, whole: whole}
 	d.cond.L = &d.mu
 	if size > 0 {
 		d.data = make([]byte, 0, size)
 	}
 	go d.run(ctx, url)
+	return d
+}
+
+// downloaded returns a download that has all of b in already, as a song
+// from the cache.
+func downloaded(b []byte) *download {
+	d := &download{data: b, size: int64(len(b)), done: true, cancel: func() {}}
+	d.cond.L = &d.mu
 	return d
 }
 
@@ -72,6 +85,11 @@ func (d *download) run(ctx context.Context, url string) {
 		}
 		if err == io.EOF {
 			finish(nil)
+			// Nothing appends to the data any more: it is the song's, whole
+			// if as long as promised.
+			if d.whole != nil && (d.size <= 0 || int64(len(d.data)) == d.size) {
+				d.whole(d.data)
+			}
 			return
 		}
 		if err != nil {
@@ -85,9 +103,8 @@ func (d *download) run(ctx context.Context, url string) {
 func (d *download) Close() {
 	d.cancel()
 	d.mu.Lock()
-	d.done = true
-	if d.err == nil {
-		d.err = context.Canceled
+	if !d.done {
+		d.done, d.err = true, context.Canceled
 	}
 	d.cond.Broadcast()
 	d.mu.Unlock()
@@ -151,6 +168,25 @@ func (r *downloadReader) Read(p []byte) (int, error) {
 	n := copy(p, d.data[r.pos:])
 	r.pos += int64(n)
 	return n, nil
+}
+
+// A stream decodes a download for package audio, and measures the
+// spectrum of what it decodes, for the visualizers: an MP3's or a FLAC's.
+type stream interface {
+	audio.Decoder
+	Close() error
+	// source returns the download decoded, and its spectrum.
+	source() (*download, *spectrum)
+}
+
+// openStream opens the song dl fetches, MP3 or FLAC, as its first bytes
+// say. An MP3 says nothing of its length: durationMs is it.
+func openStream(dl *download, durationMs int64) (stream, error) {
+	off := id3Size(dl)
+	if dl.waitFor(off+4) >= off+4 && string(dl.bytesAt(off)[:4]) == "fLaC" {
+		return openFLACStream(dl)
+	}
+	return openMP3Stream(dl, durationMs)
 }
 
 // mp3Stream decodes a download for package audio, seeking by bytes: songs
@@ -228,14 +264,21 @@ func (s *mp3Stream) Read(dst []float32) (int, error) {
 	return 0, err
 }
 
+// preroll is how many frames of sound a seek decodes before the one asked
+// for, and drops. An MP3 frame borrows bits from the frames before it, up
+// to 511 bytes back, which at 128 kbps is two frames, and its sound
+// overlaps theirs: the first few decoded from the middle of a file are
+// noise, as loud as the loudest sound.
+const preroll = 4 * 1152
+
 func (s *mp3Stream) SetPosition(frame int64) error {
 	var off int64
-	if frame > 0 && s.frames > 0 {
+	if from := frame - preroll; from > 0 && s.frames > 0 {
 		size := s.dl.size
 		if size <= 0 {
 			size = s.dl.waitFor(math.MaxInt64)
 		}
-		off = s.start + int64(float64(size-s.start)*float64(frame)/float64(s.frames))
+		off = s.start + int64(float64(size-s.start)*float64(from)/float64(s.frames))
 		off = findFrame(s.dl, off)
 	}
 	dec, err := gomp3.NewDecoder(&downloadReader{d: s.dl, pos: off})
@@ -243,14 +286,13 @@ func (s *mp3Stream) SetPosition(frame int64) error {
 		return err
 	}
 	s.dec, s.pos = dec, frame
-	s.skip = 0
-	if off > 0 {
-		// The first frames after a jump lack the bits they borrow from
-		// the frames before them: leave them out.
-		s.skip = 2 * 1152 * 4
-	}
+	// Drop what comes before frame: the preroll, or near the start, all
+	// of it from there.
+	s.skip = int(min(frame, preroll)) * 4
 	return nil
 }
+
+func (s *mp3Stream) source() (*download, *spectrum) { return s.dl, s.spec }
 
 func (s *mp3Stream) Close() error {
 	s.closeMu.Do(s.dl.Close)

@@ -1,12 +1,12 @@
 package player
 
 import (
+	"math"
 	"math/rand/v2"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/audio"
-	_ "github.com/egoist/mygo/audio/mp3"
 
 	"netease-music-mygo/internal/lyrics"
 	"netease-music-mygo/internal/netease"
@@ -26,6 +26,11 @@ type Player struct {
 	post func(func())
 	// Quality returns the stream level to load, as the settings say.
 	Quality func() string
+	// Normalize reports whether to even out the loudness of tracks, as
+	// the settings say.
+	Normalize func() bool
+	// Cache keeps the songs played, if set.
+	Cache *Cache
 
 	queue   []netease.Track
 	order   []int // the queue's indices in play order: shuffled or not
@@ -34,9 +39,20 @@ type Player struct {
 	repeat  RepeatMode
 	volume  float64
 
+	// A radio goes on with the tracks its feed gives, as the queue nears
+	// its end, for as long as nothing else is played.
+	radio    string
+	feed     func(got func([]netease.Track))
+	radioGen int  // counts radios, to drop what an old one gives
+	feeding  bool // the feed is asked
+	awaiting bool // at the queue's end, for what the feed gives
+
 	track   *netease.Track
 	out     *audio.Player
-	stream  *mp3Stream
+	stream  stream
+	info    *netease.Stream // what the current track streams
+	fade    fader
+	gain    float64 // the current track's normalizing gain
 	loading bool
 	playing bool // what the listener wants: false while paused
 	err     string
@@ -47,10 +63,15 @@ type Player struct {
 
 	// pending holds a seek asked for while the track loads.
 	pending time.Duration
+	// A seek playing fades out, then lands, then fades in: meanwhile the
+	// position is where it goes.
+	seeking bool
+	seekTo  time.Duration
+	seekGen int
 }
 
 func New(post func(func())) *Player {
-	p := &Player{post: post, at: -1, volume: 0.8}
+	p := &Player{post: post, at: -1, volume: 0.8, gain: 1}
 	// Music, mixed far enough ahead to play on while macOS keeps the app
 	// waiting, as it does while its appearance changes.
 	audio.SetLatency(audio.LatencyPlayback)
@@ -110,6 +131,10 @@ func (p *Player) ended() {
 		p.out.Play()
 		return
 	}
+	if p.at+1 >= len(p.order) && p.feed != nil {
+		p.awaitFeed()
+		return
+	}
 	if p.at+1 >= len(p.order) && p.repeat == RepeatOff {
 		p.playing = false
 		p.sync()
@@ -123,6 +148,7 @@ func (p *Player) PlayQueue(tracks []netease.Track, start int) {
 	if len(tracks) == 0 {
 		return
 	}
+	p.endRadio()
 	start = min(max(start, 0), len(tracks)-1)
 	p.queue = append([]netease.Track(nil), tracks...)
 	p.order = make([]int, len(p.queue))
@@ -135,6 +161,96 @@ func (p *Player) PlayQueue(tracks []netease.Track, start int) {
 		return
 	}
 	p.load(start)
+}
+
+// PlayRadio plays tracks in their order, then goes on with those feed
+// gives as the queue nears its end, until something else is played. The
+// radio's name says which it is. feed calls got on the main thread.
+func (p *Player) PlayRadio(name string, tracks []netease.Track, feed func(got func([]netease.Track))) {
+	if len(tracks) == 0 {
+		return
+	}
+	shuffle := p.shuffle
+	p.shuffle = false
+	p.PlayQueue(tracks, 0)
+	p.shuffle = shuffle
+	p.AttachRadio(name, feed)
+}
+
+// RadioFrom makes the track playing the first of a radio's queue, which
+// goes on with tracks, then with those feed gives: without starting it
+// over.
+func (p *Player) RadioFrom(name string, tracks []netease.Track, feed func(got func([]netease.Track))) {
+	if p.track == nil {
+		return
+	}
+	p.queue, p.order, p.at = []netease.Track{*p.track}, []int{0}, 0
+	p.appendTracks(tracks)
+	p.AttachRadio(name, feed)
+}
+
+// AttachRadio makes the queue the radio name's, which feed goes on with,
+// as after restoring a session that played it.
+func (p *Player) AttachRadio(name string, feed func(got func([]netease.Track))) {
+	p.endRadio()
+	p.radio, p.feed = name, feed
+	p.refill()
+}
+
+func (p *Player) endRadio() {
+	p.radioGen++
+	p.radio, p.feed, p.feeding, p.awaiting = "", nil, false, false
+}
+
+// Radio returns the name of the radio playing, or "".
+func (p *Player) Radio() string { return p.radio }
+
+// refill asks the radio for more once the queue is near its end.
+func (p *Player) refill() {
+	if p.feed == nil || p.feeding || p.at < len(p.order)-2 {
+		return
+	}
+	p.feeding = true
+	gen := p.radioGen
+	p.feed(func(more []netease.Track) {
+		if gen != p.radioGen {
+			return
+		}
+		p.feeding = false
+		p.appendTracks(more)
+		switch {
+		case !p.awaiting:
+		case p.at+1 < len(p.order):
+			p.awaiting = false
+			p.load(p.at + 1)
+		default:
+			// The radio has nothing more: it stops at its end.
+			p.awaiting, p.playing = false, false
+			p.err = "电台暂时没有更多歌曲"
+			p.sync()
+		}
+	})
+}
+
+// awaitFeed waits at the end of a radio's queue for what its feed gives.
+func (p *Player) awaitFeed() {
+	p.awaiting = true
+	p.refill()
+}
+
+// appendTracks adds tracks to the end of the queue, but those in it.
+func (p *Player) appendTracks(tracks []netease.Track) {
+	in := make(map[int64]bool, len(p.queue))
+	for _, t := range p.queue {
+		in[t.ID] = true
+	}
+	for _, t := range tracks {
+		if !in[t.ID] {
+			in[t.ID] = true
+			p.order = append(p.order, len(p.queue))
+			p.queue = append(p.queue, t)
+		}
+	}
 }
 
 // shuffleOrder shuffles the order, with first first.
@@ -176,13 +292,16 @@ func (p *Player) Queue() []netease.Track { return p.queue }
 func (p *Player) Playing() bool { return p.playing }
 
 // Loading reports whether the current track is still loading.
-func (p *Player) Loading() bool { return p.loading }
+func (p *Player) Loading() bool { return p.loading || p.awaiting }
 
 // Ready reports whether the current track has loaded, to play.
 func (p *Player) Ready() bool { return p.out != nil }
 
 // Err returns why the current track did not play, or "".
 func (p *Player) Err() string { return p.err }
+
+// Stream returns what the current track streams, once loaded, or nil.
+func (p *Player) Stream() *netease.Stream { return p.info }
 
 func (p *Player) Shuffle() bool      { return p.shuffle }
 func (p *Player) Repeat() RepeatMode { return p.repeat }
@@ -196,7 +315,8 @@ func (p *Player) Downloaded() (float64, bool) {
 	if p.stream == nil {
 		return 0, false
 	}
-	return p.stream.dl.Progress(), true
+	dl, _ := p.stream.source()
+	return dl.Progress(), true
 }
 
 // PlayOrder returns the queue's indices in play order, and where the
@@ -209,6 +329,11 @@ func (p *Player) Next() {
 	}
 	at := p.at + 1
 	if at >= len(p.order) {
+		if p.feed != nil {
+			p.stop()
+			p.awaitFeed()
+			return
+		}
 		at = 0
 	}
 	p.load(at)
@@ -240,48 +365,123 @@ func (p *Player) Jump(i int) {
 	}
 }
 
+// TogglePlay pauses, fading out, or plays, fading in.
 func (p *Player) TogglePlay() {
 	if p.out == nil {
-		if p.track == nil && len(p.order) > 0 {
-			p.load(max(p.at, 0))
+		switch {
+		case p.loading:
+			// It plays once loaded, or not.
+			p.playing = !p.playing
+			p.sync()
+		case len(p.order) > 0:
+			p.loadSkipping(max(p.at, 0), 0, true, p.pending)
 		}
 		return
 	}
+	out := p.out
 	if p.playing {
-		p.out.Pause()
 		p.playing = false
-	} else {
-		if !p.out.Playing() && p.out.Position() >= p.out.Duration()-time.Second {
-			p.out.Seek(0)
-		}
-		p.out.Play()
-		p.playing = true
+		p.fade.fade(0, fadeOut, func() {
+			p.post(func() {
+				if p.out == out && !p.playing {
+					out.Pause()
+					p.sync()
+				}
+			})
+		})
+		p.sync()
+		return
 	}
+	p.playing = true
+	if !p.seeking && !out.Playing() {
+		if out.Position() >= out.Duration()-time.Second {
+			out.Seek(0)
+		}
+		out.Play()
+	}
+	p.fade.fade(1, fadeIn, nil)
 	p.sync()
 }
 
+// seekGap is how long a seek waits for what plays to fade out, which the
+// audio player does over 5 ms, as it pauses: within the next buffer or
+// two it sends the system.
+const seekGap = 30 * time.Millisecond
+
+// Seek moves to t. Playing, it pauses and plays again around the jump,
+// which the audio player fades over a few milliseconds, rather than
+// cutting from one sound to the other with a click.
 func (p *Player) Seek(t time.Duration) {
 	if p.out == nil {
 		p.pending = t
 		return
 	}
-	p.out.Seek(t)
-	if p.playing {
-		p.out.Play()
+	out := p.out
+	// Paused, it jumps at once; but a seek on its way paused it only for
+	// the jump, and this one takes its place, playing on from there.
+	if !out.Playing() && !p.seeking {
+		out.Seek(t)
+		p.sync()
+		return
 	}
+	p.seekGen++
+	gen := p.seekGen
+	p.seeking, p.seekTo = true, t
+	out.Pause()
+	time.AfterFunc(seekGap, func() {
+		p.post(func() {
+			if gen != p.seekGen || p.out != out {
+				return
+			}
+			p.seeking = false
+			out.Seek(t)
+			if p.playing || !p.fade.silent() {
+				out.Play()
+			}
+			p.sync()
+		})
+	})
 	p.sync()
 }
 
 func (p *Player) SetVolume(v float64) {
 	p.volume = v
-	if p.out != nil {
-		p.out.SetVolume(v * v) // the ear hears loudness in powers
+	p.applyGain()
+}
+
+// applyGain sets the volume of what plays: the listener's, which the ear
+// hears in powers, and the track's gain, if normalizing.
+func (p *Player) applyGain() {
+	g := p.volume * p.volume
+	if p.Normalize != nil && p.Normalize() {
+		g *= p.gain
 	}
+	p.fade.setGain(g)
+}
+
+// normPreamp lifts normalized tracks, which NetEase brings to the quiet
+// loudness of ReplayGain, nearer to how loud music plays elsewhere.
+const normPreamp = 4
+
+// normGain is the gain that brings a track as loud as others, as NetEase
+// measured it, but never so loud that its peaks would clip.
+func normGain(st *netease.Stream) float64 {
+	if st == nil || st.Gain == 0 && st.Peak == 0 {
+		return 1
+	}
+	g := math.Pow(10, (st.Gain+normPreamp)/20)
+	if st.Peak > 0 {
+		g = min(g, 1/st.Peak)
+	}
+	return g
 }
 
 func (p *Player) Position() time.Duration {
-	if p.out == nil {
+	switch {
+	case p.out == nil:
 		return p.pending
+	case p.seeking:
+		return p.seekTo
 	}
 	return p.out.Position()
 }
@@ -298,33 +498,43 @@ func (p *Player) Levels() ([Bands]float32, bool) {
 	if p.stream == nil || p.out == nil || !p.playing {
 		return [Bands]float32{}, false
 	}
-	frame := int64(p.out.Position().Seconds() * float64(p.stream.rate))
-	return p.stream.spec.at(frame)
+	_, spec := p.stream.source()
+	frame := int64(p.Position().Seconds() * float64(p.stream.SampleRate()))
+	return spec.at(frame)
 }
 
 func (p *Player) stop() {
-	if p.out != nil {
-		p.out.Close()
+	if out := p.out; out != nil {
+		// Paused first, it fades out over a few milliseconds, rather than
+		// stopping with a click.
+		out.Pause()
+		time.AfterFunc(100*time.Millisecond, out.Close)
 	}
-	p.out, p.stream = nil, nil
+	p.out, p.stream, p.info = nil, nil, nil
+	p.seeking = false
+	p.fade.attach(nil, 1)
 }
 
 // load plays the track at order[at], skipping those that cannot play.
 func (p *Player) load(at int) {
-	p.loadSkipping(at, 0)
+	p.loadSkipping(at, 0, true, 0)
 }
 
-func (p *Player) loadSkipping(at, skipped int) {
+// loadSkipping loads the track at order[at], to play or not, from from,
+// skipping those that cannot play: skipped of them so far.
+func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.stop()
 	p.gen++
 	gen := p.gen
 	p.at = at
 	t := p.queue[p.order[at]]
 	p.track = &t
-	p.loading, p.playing, p.err = true, true, ""
+	p.loading, p.playing, p.err = true, play, ""
+	p.awaiting = false
 	p.lyrics, p.lyricsLoaded = nil, false
-	p.pending = 0
+	p.pending = from
 	p.announce(&t, nil)
+	p.refill()
 
 	go func() {
 		cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600))
@@ -355,15 +565,7 @@ func (p *Player) loadSkipping(at, skipped int) {
 		if p.Quality != nil {
 			level = p.Quality()
 		}
-		u, size, err := netease.SongURL(t.ID, level)
-		var s *mp3Stream
-		if err == nil {
-			dl := startDownload(u, size)
-			s, err = openMP3Stream(dl, t.Duration)
-			if err != nil {
-				dl.Close()
-			}
-		}
+		info, s, err := p.open(t, level)
 		p.post(func() {
 			if gen != p.gen {
 				if s != nil {
@@ -383,16 +585,23 @@ func (p *Player) loadSkipping(at, skipped int) {
 					if next >= len(p.order) {
 						next = 0
 					}
-					p.loadSkipping(next, skipped+1)
+					p.loadSkipping(next, skipped+1, p.playing, 0)
 				} else {
 					p.playing = false
 					p.sync()
 				}
 				return
 			}
-			p.stream = s
+			p.stream, p.info = s, info
+			p.gain = normGain(info)
 			p.out = audio.NewPlayer(s)
-			p.out.SetVolume(p.volume * p.volume)
+			// From its middle, as a session picked up again, it fades in.
+			level := 1.0
+			if p.pending > 0 {
+				level = 0
+			}
+			p.fade.attach(p.out, level)
+			p.applyGain()
 			p.out.OnEnd(func() {
 				p.post(func() {
 					if gen == p.gen {
@@ -406,8 +615,79 @@ func (p *Player) loadSkipping(at, skipped int) {
 			}
 			if p.playing {
 				p.out.Play()
+				p.fade.fade(1, fadeIn, nil)
 			}
 			p.sync()
 		})
 	}()
+}
+
+// open opens track t's audio at level: kept in the cache, or else
+// streamed, and kept once it has all come in.
+func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, error) {
+	var dl *download
+	b, info, ok := p.Cache.lookup(t.ID, level)
+	if ok {
+		dl = downloaded(b)
+	} else {
+		var err error
+		info, err = netease.SongURL(t.ID, level)
+		if err != nil {
+			return nil, nil, err
+		}
+		cache := p.Cache
+		dl = startDownload(info.URL, info.Size, func(b []byte) { cache.store(t.ID, info, b) })
+	}
+	s, err := openStream(dl, t.Duration)
+	if err != nil {
+		dl.Close()
+		return nil, nil, err
+	}
+	return info, s, nil
+}
+
+// Session is where playback was left, to pick up again.
+type Session struct {
+	Queue    []netease.Track `json:"queue"`
+	Order    []int           `json:"order"`
+	At       int             `json:"at"`
+	Shuffle  bool            `json:"shuffle"`
+	Repeat   RepeatMode      `json:"repeat"`
+	Position int64           `json:"position"` // milliseconds
+	Radio    string          `json:"radio,omitempty"`
+}
+
+// Session returns where playback is, or false with nothing queued.
+func (p *Player) Session() (Session, bool) {
+	if p.track == nil || p.at < 0 {
+		return Session{}, false
+	}
+	return Session{
+		Queue:    p.queue,
+		Order:    p.order,
+		At:       p.at,
+		Shuffle:  p.shuffle,
+		Repeat:   p.repeat,
+		Position: p.Position().Milliseconds(),
+		Radio:    p.radio,
+	}, true
+}
+
+// Restore picks up a session where it was left, paused, and loads its
+// track to play at once when asked.
+func (p *Player) Restore(s Session) {
+	n := len(s.Queue)
+	if n == 0 || len(s.Order) != n || s.At < 0 || s.At >= n {
+		return
+	}
+	seen := make([]bool, n)
+	for _, i := range s.Order {
+		if i < 0 || i >= n || seen[i] {
+			return
+		}
+		seen[i] = true
+	}
+	p.queue, p.order = s.Queue, s.Order
+	p.shuffle, p.repeat = s.Shuffle, s.Repeat%3
+	p.loadSkipping(s.At, 0, false, time.Duration(s.Position)*time.Millisecond)
 }

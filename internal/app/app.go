@@ -18,6 +18,7 @@ const (
 	pageCharts
 	pagePlaylist
 	pageSearch
+	pageFM
 )
 
 type route struct {
@@ -70,13 +71,17 @@ type app struct {
 	nowPlaying  bool
 	npOpen      bool      // Now Playing as it last showed: open or not
 	npChangedAt time.Time // when it last opened or closed
-	npPane      int       // 0: lyrics, 1: up next
+	npPane      int       // paneLyrics, paneQueue, paneStage or paneComments
 	lyricScroll ui.ScrollState
 	lyricGlide  lyricGlide
 	lyricAt     int
 	lyricTrack  int64
 	queueList   ui.ListState
 	queueAt     int // the row of the queue pane last scrolled to, -1 while it is hidden
+	comments    commentState
+
+	fmMode        int    // the FM mode chosen, in fmModes
+	radioStarting string // the radio asked for its first songs, or ""
 
 	scrub      float64
 	scrubbing  bool
@@ -96,6 +101,10 @@ type app struct {
 
 	settings    settings
 	settingsWin *mygo.Window
+	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
+
+	restored     bool   // playback picked up where it was left
+	savedSession string // the session as last kept
 }
 
 // post runs fn on the main thread and redraws both windows. Without a
@@ -137,6 +146,7 @@ func Run() error {
 		plErr:     map[int64]string{},
 		lyricAt:   -1,
 		queueAt:   -1,
+		cacheUsed: -1,
 	}
 	mygo.App.SetName("网易云音乐")
 	mygo.App.WhenReady(func() {
@@ -161,11 +171,14 @@ func Run() error {
 		a.art = newArtCache(a.post)
 		a.pl = player.New(a.post)
 		a.pl.Quality = func() string { return a.settings.Quality }
+		a.pl.Normalize = func() bool { return a.settings.Normalize }
+		a.pl.Cache = newSongCache(a.settings.CacheMB)
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
 		a.setMenu()
 		a.boot()
 		a.notch = newNotch(a)
+		a.keepSession()
 		if shotHook != nil {
 			shotHook(a)
 		}
@@ -182,6 +195,7 @@ func Run() error {
 		a.quitting = true
 		a.settings.Volume = a.volume
 		a.settings.save()
+		a.saveSession()
 	})
 	mygo.App.OnWindowAllClosed(func() {})
 	mygo.App.OnActivate(func(bool) { a.showMain() })

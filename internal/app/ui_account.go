@@ -46,6 +46,9 @@ func (a *app) boot() {
 // signedIn shows what is personal to prof, or to nobody.
 func (a *app) signedIn(prof *netease.Profile) {
 	a.profile = prof
+	// Playback picks up where it was left, once the session that lets
+	// the listener play their songs is back.
+	a.restoreSession()
 	a.mine, a.saved, a.recPlaylists, a.liked = nil, nil, nil, nil
 	// What the listener may play changed: load the lists again.
 	a.playlists = map[int64]*netease.Playlist{}

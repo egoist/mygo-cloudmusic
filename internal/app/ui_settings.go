@@ -12,12 +12,14 @@ func (a *app) openSettings() {
 	if a.settingsWin != nil {
 		a.settingsWin.Show()
 		a.settingsWin.Focus()
+		a.measureCache()
 		return
 	}
+	a.measureCache()
 	a.settingsWin = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "设置",
 		Width:           560,
-		Height:          600,
+		Height:          720,
 		MinWidth:        480,
 		MinHeight:       420,
 		StateKey:        "settings",
@@ -89,9 +91,9 @@ func (a *app) settingsView(c *ui.Context) {
 					a.changed()
 				}
 			})
-			row("音质", "下一首歌曲开始生效", func() {
+			row("音质", "无损与 Hi-Res 需要黑胶 VIP，没有时播放所能播放的最高音质；下一首歌曲开始生效", func() {
 				labels := make([]string, len(qualityLevels))
-				chosen := qualityLevels[len(qualityLevels)-1].label
+				chosen := qualityLevels[2].label
 				for i, q := range qualityLevels {
 					labels[i] = q.label
 					if q.level == s.Quality {
@@ -105,6 +107,39 @@ func (a *app) settingsView(c *ui.Context) {
 						}
 					}
 					a.changed()
+				}
+			})
+			row("音量均衡", "按网易云音乐测得的响度调整每首歌的音量，让歌曲听起来一样响", func() {
+				if ui.Switch(c.Key("normalize"), &s.Normalize).Label("音量均衡").Changed() {
+					a.pl.SetVolume(a.volume)
+					a.changed()
+				}
+			})
+		})
+
+		group("缓存", func() {
+			row("歌曲缓存", "听过的歌曲保存在本机，再次播放无需等待，也不耗流量；"+a.cacheUsage(), func() {
+				labels := make([]string, len(cacheLimits))
+				chosen := cacheLimits[2].label
+				for i, l := range cacheLimits {
+					labels[i] = l.label
+					if l.mb == s.CacheMB {
+						chosen = l.label
+					}
+				}
+				if ui.Select(c.Key("cache"), &chosen, labels).Label("歌曲缓存").Width(150).Changed() {
+					for _, l := range cacheLimits {
+						if l.label == chosen {
+							s.CacheMB = l.mb
+						}
+					}
+					a.changed()
+					a.applyCacheLimit()
+				}
+			})
+			row("清除缓存", "删除保存在本机的全部歌曲", func() {
+				if ui.Button(c.Key("clear-cache"), "清除").Disabled(a.cacheUsed <= 0).Clicked() {
+					a.clearCache()
 				}
 			})
 		})

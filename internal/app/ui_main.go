@@ -160,6 +160,7 @@ func (a *app) sidebar(c *ui.Context) {
 		ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Grow(1).Margin(0, -6).Padding(0, 6).Gap(4).Children(func() {
 			a.navItem(c, iconHome, "为你推荐", route{page: pageHome})
 			a.navItem(c, iconDaily, "每日推荐", route{page: pageDaily})
+			a.navItem(c, iconRadio, "私人 FM", route{page: pageFM})
 			a.navItem(c, iconCharts, "排行榜", route{page: pageCharts})
 			if a.searched != "" {
 				a.navItem(c, iconSearch, "搜索结果", route{page: pageSearch})
@@ -309,6 +310,8 @@ func (a *app) content(c *ui.Context) {
 		a.playlistPage(c)
 	case pageSearch:
 		a.searchPage(c)
+	case pageFM:
+		a.fmPage(c)
 	}
 }
 

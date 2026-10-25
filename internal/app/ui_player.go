@@ -13,8 +13,11 @@ import (
 // scrubState is a progress bar's own: the value dragged, while it is, and
 // the levels of the music its smoke follows.
 type scrubState struct {
-	v      float64
-	active bool
+	v float64
+	// held is set while the pointer pressed on the bar is down, wherever
+	// it has gone since: Pressed is false off the bar, which is thin.
+	held   bool
+	active bool // dragged since the last frame, to seek once let go
 	level  barState
 }
 
@@ -28,19 +31,32 @@ func secs(s float64) time.Duration { return time.Duration(s * float64(time.Secon
 func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, height float32, smoke ui.Color) ui.Element {
 	pl := a.pl
 	dur := pl.Duration().Seconds()
-	if !st.active {
+	if !st.active && !st.held {
 		st.v = pl.Position().Seconds()
 	}
 	s := ui.SliderBase(c, &st.v, 0, max(dur, 1)).Height(height).FocusRing(false).Label("播放进度").Cursor(ui.CursorPointer)
-	pressed := s.Pressed()
+	// The press and its release come to the bar wherever the pointer is,
+	// and go on to the slider, which follows the pointer.
+	s.HandleInput(func(ev ui.InputEvent) bool {
+		switch ev.Kind {
+		case ui.InputPointerDown:
+			st.held = ev.Button == 0
+		case ui.InputPointerUp:
+			st.held = false
+		}
+		return false
+	})
+	pressed := st.held
 	switch {
 	case pressed:
 		st.active = true
 	case st.active:
+		// Let go: there, but not right at the end, which would end the
+		// song as it begins to play.
 		st.active = false
-		pl.Seek(secs(st.v))
+		pl.Seek(secs(min(st.v, max(0, dur-1))))
 	case s.Changed():
-		pl.Seek(secs(st.v))
+		pl.Seek(secs(min(st.v, max(0, dur-1))))
 	}
 	hot := s.Hovered() || pressed
 	thick := float32(4)

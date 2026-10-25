@@ -51,6 +51,9 @@ type Player struct {
 
 func New(post func(func())) *Player {
 	p := &Player{post: post, at: -1, volume: 0.8}
+	// Music, mixed far enough ahead to play on while macOS keeps the app
+	// waiting, as it does while its appearance changes.
+	audio.SetLatency(audio.LatencyPlayback)
 	// The media keys, and the controls of Control Center.
 	mygo.NowPlaying.OnCommand(func(cmd mygo.MediaCommand, pos time.Duration) {
 		switch cmd {

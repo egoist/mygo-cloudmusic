@@ -255,13 +255,13 @@ func (a *app) fmCard(c *ui.Context) {
 	}
 	card := ui.Box(c.Key("fm-card")).Height(320).Radius(24).Background(ui.Hex("#232328")).TextColor(white).
 		Shadow(0, 18, 44, -16, a.pal.cardShade)
+	in := artIn(card, backdrop(art))
 	card.Children(func() {
-		if art != nil && art.backdrop != nil {
-			ui.Image(c, art.backdrop).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Radius(24)
-		} else {
+		if in < 1 {
 			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(24).
 				LinearGradient(ui.LinearGradient{Angle: 135, Oklab: true, From: ui.Oklch(0.42, 0.14, 20), To: ui.Oklch(0.3, 0.1, 300)})
 		}
+		artImage(c, backdrop(art), 24, in)
 		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(24).
 			LinearGradient(ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
 				{Color: ui.RGBA(0, 0, 0, 0.35), At: 0},
@@ -312,10 +312,6 @@ func (a *app) fmCard(c *ui.Context) {
 						}
 					}
 					a.likeButton(c.Key("like"), tr, 20, white.Alpha(0.8))
-					icon := iconPlay
-					if pl.Playing() {
-						icon = iconPause
-					}
 					play := ui.ButtonBase(c.Key("play")).Size(56, 56).Center().Radius(999).Background(white).TextColor(ui.Hex("#1d1d1f")).Label("播放/暂停")
 					pose := ui.Pose{}
 					if play.Pressed() {
@@ -324,7 +320,7 @@ func (a *app) fmCard(c *ui.Context) {
 						pose.Scale = 1.05
 					}
 					play.AnimatePose(pose, ui.Snappy)
-					play.Children(func() { ui.Icon(c, icon).Size(22, 22) })
+					play.Children(func() { playPause(c, play, pl.Playing(), 22) })
 					if play.Clicked() {
 						pl.TogglePlay()
 					}

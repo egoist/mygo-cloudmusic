@@ -17,11 +17,11 @@ func (a *app) dailyArt(c *ui.Context, now time.Time, size float32) {
 		art = a.art.get(netease.Sized(a.daily[0].Album.PicURL, 600), true)
 	}
 	radius := size * 0.07
-	ui.Box(c).Size(size, size).Radius(radius).Background(ui.Hex("#3a3a40")).
-		Shadow(0, 18, 40, -10, a.pal.cardShade).Children(func() {
-		if art != nil && art.backdrop != nil {
-			ui.Image(c, art.backdrop).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Radius(radius)
-		}
+	box := ui.Box(c).Size(size, size).Radius(radius).Background(ui.Hex("#3a3a40")).
+		Shadow(0, 18, 40, -10, a.pal.cardShade)
+	in := artIn(box, backdrop(art))
+	box.Children(func() {
+		artImage(c, backdrop(art), radius, in)
 		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(radius).
 			LinearGradient(ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
 				{Color: ui.RGBA(0, 0, 0, 0), At: 0.35},
@@ -51,10 +51,9 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	}
 	card.AnimatePose(lift, ui.Snappy)
 	card.Shadow(0, 14, 34, -14, a.pal.cardShade)
+	in := artIn(card, backdrop(art))
 	card.Children(func() {
-		if art != nil && art.backdrop != nil {
-			ui.Image(c, art.backdrop).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Radius(20)
-		}
+		artImage(c, backdrop(art), 20, in)
 		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(20).
 			LinearGradient(ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
 				{Color: ui.RGBA(0, 0, 0, 0.45), At: 0},

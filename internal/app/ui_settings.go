@@ -3,8 +3,6 @@ package app
 import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-
-	"netease-music-mygo/internal/netease"
 )
 
 // openSettings shows the settings window, opening it the first time.
@@ -173,11 +171,7 @@ func (a *app) settingsView(c *ui.Context) {
 			}
 			prof := a.profile
 			ui.Row(c).Padding(12, 16).Gap(12).AlignItems(ui.Center).Children(func() {
-				if art := a.art.get(netease.Sized(prof.AvatarURL, 120), false); art != nil && art.bmp != nil {
-					ui.Image(c, art.bmp).Size(36, 36).Fit(ui.Cover).Radius(18)
-				} else {
-					ui.Box(c).Size(36, 36).Radius(18).Background(p.press)
-				}
+				a.avatar(c, prof.AvatarURL, 36, p.press)
 				ui.Column(c).Grow(1).Gap(2).Children(func() {
 					ui.Text(c, prof.Nickname).FontSize(13.5).FontWeight(600)
 					ui.Text(c, "已登录网易云音乐").FontSize(12).TextColor(p.muted)

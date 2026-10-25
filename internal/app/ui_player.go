@@ -323,11 +323,7 @@ func (a *app) transport(c *ui.Context, color, dim, on ui.Color, size float32) {
 		if iconButton(c.Key("prev"), iconPrev, size*0.85, color, "上一首").Clicked() {
 			pl.Prev()
 		}
-		icon := iconPlay
-		if pl.Playing() {
-			icon = iconPause
-		}
-		if iconButton(c.Key("play"), icon, size*1.25, color, "播放/暂停").Clicked() {
+		if playButton(c.Key("play"), pl.Playing(), size*1.25, color).Clicked() {
 			pl.TogglePlay()
 		}
 		if iconButton(c.Key("next"), iconNext, size*0.85, color, "下一首").Clicked() {

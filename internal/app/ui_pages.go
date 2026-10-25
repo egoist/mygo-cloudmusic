@@ -151,12 +151,13 @@ func (a *app) playlistCard(c *ui.Context, pl *netease.Playlist) {
 // The cover rounds itself rather than its parent clipping it: a clip moved
 // by a transform, as a card lifting under the pointer, is drawn on the CPU.
 func (a *app) coverFill(c *ui.Context, url string, px int, radius float32) {
-	art := a.art.get(netease.Sized(url, px), false)
-	if art == nil || art.bmp == nil {
-		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(radius).Background(a.pal.hover)
-		return
+	bmp := bitmap(a.art.get(netease.Sized(url, px), false))
+	box := ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(radius)
+	in := artIn(box, bmp)
+	if in < 1 {
+		box.Background(a.pal.hover)
 	}
-	ui.Image(c, art.bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Radius(radius)
+	box.Children(func() { artImage(c, bmp, radius, in) })
 }
 
 // coverPlayButton plays a playlist from its card, without opening it.

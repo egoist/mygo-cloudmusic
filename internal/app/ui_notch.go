@@ -295,11 +295,12 @@ func (n *notch) compact(c *ui.Context, tr *netease.Track, shown float32) {
 	art := n.a.art.get(netease.Sized(tr.Album.PicURL, 96), false)
 	s := n.h0 - 12
 	ui.Row(c).Absolute().Top(0).Left(0).Right(0).Height(n.h0).PaddingX(7).AlignItems(ui.Center).Opacity(shown).Children(func() {
-		if art != nil && art.bmp != nil {
-			ui.Image(c, art.bmp).Size(s, s).Fit(ui.Cover).Radius(s * 0.28)
-		} else {
-			ui.Box(c).Size(s, s).Radius(s * 0.28).Background(white.Alpha(0.12))
+		cov := ui.Box(c).Size(s, s).Radius(s * 0.28)
+		in := artIn(cov, bitmap(art))
+		if in < 1 {
+			cov.Background(white.Alpha(0.12))
 		}
+		cov.Children(func() { artImage(c, bitmap(art), s*0.28, in) })
 		ui.Spacer(c)
 		n.levels(c, tr, 16, s*0.7, 4)
 	})
@@ -337,13 +338,11 @@ func (n *notch) expanded(c *ui.Context, tr *netease.Track, open, left float32) {
 				lift.Scale = 1.05
 			}
 			cov.AnimatePose(lift, ui.Snappy)
-			cov.Children(func() {
-				if art != nil && art.bmp != nil {
-					ui.Image(c, art.bmp).Fill().Fit(ui.Cover).Radius(12)
-				} else {
-					ui.Box(c).Fill().Radius(12).Background(white.Alpha(0.12))
-				}
-			})
+			in := artIn(cov, bitmap(art))
+			if in < 1 {
+				cov.Background(white.Alpha(0.12))
+			}
+			cov.Children(func() { artImage(c, bitmap(art), 12, in) })
 			if cov.Clicked() {
 				a.nowPlaying = true
 				a.showMain()

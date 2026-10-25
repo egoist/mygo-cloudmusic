@@ -166,7 +166,7 @@ func commentHeading(c *ui.Context, title string) {
 // when, from where, and how many liked it.
 func (a *app) commentRow(c *ui.Context, cm *netease.Comment, now time.Time) {
 	ui.Row(c).Padding(12).Gap(12).Radius(12).AlignItems(ui.Start).Children(func() {
-		a.avatar(c, cm.User.AvatarURL, 34)
+		a.avatar(c, cm.User.AvatarURL, 34, white.Alpha(0.1))
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(6).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, cm.User.Nickname).FontSize(13).FontWeight(600).TextColor(white.Alpha(0.6)).SingleLine().Shrink(1).MinWidth(0)
@@ -197,14 +197,15 @@ func (a *app) commentRow(c *ui.Context, cm *netease.Comment, now time.Time) {
 	})
 }
 
-// avatar shows a listener's picture, round.
-func (a *app) avatar(c *ui.Context, url string, size float32) {
-	art := a.art.get(netease.Sized(url, int(size*3)), false)
-	if art == nil || art.bmp == nil {
-		ui.Box(c).Size(size, size).Radius(size / 2).Background(white.Alpha(0.1)).Shrink(0)
-		return
+// avatar shows a listener's picture, round, over empty while it loads.
+func (a *app) avatar(c *ui.Context, url string, size float32, empty ui.Color) {
+	bmp := bitmap(a.art.get(netease.Sized(url, int(size*3)), false))
+	box := ui.Box(c).Size(size, size).Radius(size / 2).Shrink(0)
+	in := artIn(box, bmp)
+	if in < 1 {
+		box.Background(empty)
 	}
-	ui.Image(c, art.bmp).Size(size, size).Fit(ui.Cover).Radius(size / 2).Shrink(0)
+	box.Children(func() { artImage(c, bmp, size/2, in) })
 }
 
 // commentTime says when a comment was written, as NetEase does: in

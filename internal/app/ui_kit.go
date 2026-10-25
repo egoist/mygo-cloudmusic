@@ -61,6 +61,44 @@ func paletteFor(t *ui.Theme) palette {
 // iconButton is a borderless button showing an icon, which a soft circle
 // marks under the pointer and which gives a little as it is pressed.
 func iconButton(c *ui.Context, icon *ui.SVG, size float32, color ui.Color, label string) ui.Element {
+	b := roundButton(c, size, color, label)
+	b.Children(func() { ui.Icon(c, icon).Size(size, size) })
+	return b
+}
+
+// playButton is the icon button that plays and pauses, its icon turning
+// from one into the other.
+func playButton(c *ui.Context, playing bool, size float32, color ui.Color) ui.Element {
+	b := roundButton(c, size, color, "播放/暂停")
+	b.Children(func() { playPause(c, b, playing, size) })
+	return b
+}
+
+// playPause draws the icon of b, a button that plays and pauses: as it
+// goes from one to the other, the icon going shrinks and fades as the one
+// coming grows in, with a little spring.
+func playPause(c *ui.Context, b ui.Element, playing bool, size float32) {
+	to := float32(0)
+	if playing {
+		to = 1
+	}
+	v := b.AnimateTo("playing", to, ui.Animation{Spring: ui.SpringOptions{Duration: 340 * time.Millisecond, Bounce: 0.3}})
+	ui.Box(c).Size(size, size).Children(func() {
+		for _, icon := range []struct {
+			svg   *ui.SVG
+			shown float32
+		}{{iconPlay, 1 - v}, {iconPause, v}} {
+			if icon.shown <= 0.01 {
+				continue
+			}
+			s := 0.4 + 0.6*icon.shown
+			ui.Icon(c, icon.svg).Absolute().Top(0).Left(0).Size(size, size).Scale(s, s).Opacity(min(icon.shown, 1))
+		}
+	})
+}
+
+// roundButton is the button of iconButton, without its icon.
+func roundButton(c *ui.Context, size float32, color ui.Color, label string) ui.Element {
 	b := ui.ButtonBase(c).Size(size+16, size+16).Center().Radius(999).Label(label).TextColor(color)
 	bg := ui.Transparent
 	if b.Hovered() {
@@ -72,7 +110,6 @@ func iconButton(c *ui.Context, icon *ui.SVG, size float32, color ui.Color, label
 		pose.Scale = 0.88
 	}
 	b.AnimatePose(pose, ui.Snappy)
-	b.Children(func() { ui.Icon(c, icon).Size(size, size) })
 	return b
 }
 
@@ -99,13 +136,60 @@ func pillButton(c *ui.Context, icon *ui.SVG, label string, bg, fg ui.Color) ui.E
 // cover shows an artwork, or a placeholder of the same size while it loads.
 func (a *app) cover(c *ui.Context, url string, px int, size, radius float32) ui.Element {
 	p := a.pal
-	art := a.art.get(netease.Sized(url, px), false)
-	if art == nil || art.bmp == nil {
-		return ui.Box(c).Size(size, size).Radius(radius).Background(p.hover).Center().Children(func() {
-			ui.Icon(c, iconNote).Size(size*0.3, size*0.3).TextColor(p.faint)
-		})
+	box := ui.Box(c).Size(size, size).Radius(radius).Center()
+	bmp := bitmap(a.art.get(netease.Sized(url, px), false))
+	in := artIn(box, bmp)
+	if in < 1 {
+		box.Background(p.hover)
 	}
-	return ui.Image(c, art.bmp).Size(size, size).Fit(ui.Cover).Radius(radius)
+	box.Children(func() {
+		if in < 1 {
+			ui.Icon(c, iconNote).Size(size*0.3, size*0.3).TextColor(p.faint).Opacity(1 - in)
+		}
+		artImage(c, bmp, radius, in)
+	})
+	return box
+}
+
+// bitmap returns the cover of art, nil while it loads.
+func bitmap(art *artwork) *ui.Bitmap {
+	if art == nil {
+		return nil
+	}
+	return art.bmp
+}
+
+// backdrop returns the blurred cover of art, nil while it loads.
+func backdrop(art *artwork) *ui.Bitmap {
+	if art == nil {
+		return nil
+	}
+	return art.backdrop
+}
+
+// artFade is how an artwork fades in over its placeholder.
+var artFade = ui.Animation{Duration: 320 * time.Millisecond}
+
+// artIn returns how far bmp has faded in on el, the element that shows it
+// or its placeholder: over a moment once it loads while el shows, and at
+// once if it was ready as el first showed.
+func artIn(el ui.Element, bmp *ui.Bitmap) float32 {
+	if bmp == nil {
+		return el.Jump("art", 0)
+	}
+	return el.AnimateTo("art", 1, artFade)
+}
+
+// artImage fills its parent with bmp, its corners rounded by radius, as
+// far faded in as in.
+func artImage(c *ui.Context, bmp *ui.Bitmap, radius, in float32) {
+	if bmp == nil || in <= 0 {
+		return
+	}
+	img := ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Radius(radius)
+	if in < 1 {
+		img.Opacity(in)
+	}
 }
 
 // clock formats a duration as minutes and seconds.

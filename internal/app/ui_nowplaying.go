@@ -115,13 +115,11 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 				box := ui.Box(c.Key(tr.ID)).Size(coverSize, coverSize).AlignSelf(ui.Center).Radius(16).
 					Shadow(0, 30, 60, -12, ui.RGBA(0, 0, 0, 0.55))
 				box.AnimatePose(ui.Pose{Scale: scale}, ui.Animation{Spring: ui.SpringOptions{Duration: 600 * time.Millisecond, Bounce: 0.25}})
-				box.Children(func() {
-					if art != nil && art.bmp != nil {
-						ui.Image(c, art.bmp).Fill().Fit(ui.Cover).Radius(16)
-					} else {
-						ui.Box(c).Fill().Radius(16).Background(white.Alpha(0.08))
-					}
-				})
+				in := artIn(box, bitmap(art))
+				if in < 1 {
+					box.Background(white.Alpha(0.08))
+				}
+				box.Children(func() { artImage(c, bitmap(art), 16, in) })
 
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(36, 0, 18, 0).Children(func() {
 					ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(func() {
@@ -236,8 +234,10 @@ func (a *app) stageBar(c *ui.Context, tr *netease.Track, art *artwork, accent ui
 		a.scrubber(c.Key("stage-scrub"), &a.npScrub, white.Alpha(0.18), white.Alpha(0.9), 14, accent.Mix(white, 0.35))
 		ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Grow(1).Basis(0).MinWidth(0).Gap(12).AlignItems(ui.Center).Children(func() {
-				if art != nil && art.bmp != nil {
-					ui.Image(c, art.bmp).Size(44, 44).Fit(ui.Cover).Radius(8)
+				if bmp := bitmap(art); bmp != nil {
+					cov := ui.Box(c.Key(tr.ID)).Size(44, 44)
+					in := artIn(cov, bmp)
+					cov.Children(func() { artImage(c, bmp, 8, in) })
 				}
 				ui.Column(c).Shrink(1).MinWidth(0).Gap(2).Children(func() {
 					ui.Text(c, tr.Name).FontSize(14).FontWeight(700).SingleLine()

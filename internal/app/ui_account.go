@@ -200,8 +200,10 @@ func (a *app) loginDialog(c *ui.Context) {
 			ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Gap(10).Children(func() {
 				switch {
 				case l.finished || l.status == netease.QRScanned:
-					if art := a.art.get(netease.Sized(l.avatar, 160), false); art != nil && art.bmp != nil {
-						ui.Image(c, art.bmp).Size(72, 72).Fit(ui.Cover).Radius(36).Shadow(0, 6, 16, -4, ui.RGBA(0, 0, 0, 0.3))
+					if bmp := bitmap(a.art.get(netease.Sized(l.avatar, 160), false)); bmp != nil {
+						pic := ui.Box(c).Size(72, 72).Radius(36).Shadow(0, 6, 16, -4, ui.RGBA(0, 0, 0, 0.3))
+						in := artIn(pic, bmp)
+						pic.Children(func() { artImage(c, bmp, 36, in) })
 					}
 					if l.scanner != "" {
 						ui.Text(c, l.scanner).FontSize(14).FontWeight(600).TextColor(ui.Hex("#1d1d1f"))
@@ -264,11 +266,7 @@ func (a *app) accountRow(c *ui.Context) {
 	}
 	prof := a.profile
 	b.Label(prof.Nickname).Children(func() {
-		if art := a.art.get(netease.Sized(prof.AvatarURL, 80), false); art != nil && art.bmp != nil {
-			ui.Image(c, art.bmp).Size(26, 26).Fit(ui.Cover).Radius(13)
-		} else {
-			ui.Box(c).Size(26, 26).Radius(13).Background(p.press)
-		}
+		a.avatar(c, prof.AvatarURL, 26, p.press)
 		ui.Text(c, prof.Nickname).FontSize(13).FontWeight(600).SingleLine().Shrink(1).MinWidth(0)
 	})
 	b.Menu(func(m *ui.Menu) {

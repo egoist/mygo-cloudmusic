@@ -1,13 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-<defs>
-<linearGradient id="m" x1="0" y1="0" x2="1" y2="1">
-<stop offset="0" stop-color="#FF5B5B"/><stop offset="1" stop-color="#E3122C"/></linearGradient>
-</defs>
-<g transform="rotate(127.52 820 214)">
-<rect x="716" y="188" width="64" height="52" rx="15" fill="url(#m)"/>
-<rect x="820" y="197" width="355.83" height="34" rx="17" fill="url(#m)"/>
-<rect x="1153.83" y="186" width="92" height="56" rx="14" fill="url(#m)" transform="rotate(28 1175.83 214)"/>
-</g>
-<circle cx="820" cy="214" r="72" fill="url(#m)"/>
-<circle cx="820" cy="214" r="27" fill="#FFE1DE"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><linearGradient id="m" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#FF5B5B"/><stop offset="1" stop-color="#E3122C"/></linearGradient></defs><g transform="rotate(127.52 820 214)"><rect width="64" height="52" x="716" y="188" fill="url(#m)" rx="15"/><rect width="355.83" height="34" x="820" y="197" fill="url(#m)" rx="17"/><rect width="92" height="56" x="1153.83" y="186" fill="url(#m)" rx="14" transform="rotate(28 1175.83 214)"/></g><circle cx="820" cy="214" r="72" fill="url(#m)"/><circle cx="820" cy="214" r="27" fill="#FFE1DE"/></svg>

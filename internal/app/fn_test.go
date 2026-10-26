@@ -3,6 +3,8 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
@@ -72,14 +74,24 @@ func fnTestApp(t *testing.T) *fnEnv {
 		if path != "/user/password-login" {
 			e.asked <- path + "?" + r.URL.RawQuery
 		}
+		raw, _ := io.ReadAll(r.Body)
+		if r.Method == "POST" && path != "/user/password-login" {
+			e.asked <- "POST " + path + " " + string(raw)
+		}
 		if route := e.routes[path]; route != nil {
-			json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": route(r.URL.Query())})
+			v := route(r.URL.Query())
+			if err, ok := v.(error); ok {
+				// What the service refuses.
+				json.NewEncoder(w).Encode(map[string]any{"code": 1, "msg": err.Error()})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": v})
 			return
 		}
-		var body map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
+		var body map[string]any
+		json.Unmarshal(raw, &body)
 		if strings.HasPrefix(path, "/favorite-track/") {
-			e.asked <- "like " + path + " " + body["trackGUID"]
+			e.asked <- "like " + path + " " + fmt.Sprint(body["trackGUID"])
 		}
 		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"userToken": "t", "list": []any{}, "total": 0}})
 	}))
@@ -870,5 +882,263 @@ func TestSearchAgainDoesNotStack(t *testing.T) {
 	a.back()
 	if a.route.page != pagePlaylist {
 		t.Errorf("back from the searches: %+v", a.route)
+	}
+}
+
+// asks drains what the service was asked, and returns those that begin with
+// prefix.
+func (e *fnEnv) asks(prefix string) []string {
+	var out []string
+	for len(e.asked) > 0 {
+		if s := <-e.asked; strings.HasPrefix(s, prefix) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// playlistsTestApp is an app showing the Feiniu platform, with two playlists
+// of the listener's, one of them on show with three songs in it.
+func playlistsTestApp(t *testing.T) (*fnEnv, *fnList) {
+	e := fnTestApp(t)
+	a := e.a
+	a.fn.playlists = []netease.Playlist{
+		{ID: fnmusic.ID("p1"), Ref: "p1", Name: "通勤"},
+		{ID: fnmusic.ID("p2"), Ref: "p2", Name: "睡前"},
+	}
+	l := a.newFnList(fnSpec{typ: listPlaylist, ref: "p1"})
+	l.name = "通勤"
+	l.pg = a.trackPager(func(int) ([]netease.Track, int, error) { return nil, 0, errors.New("unexpected request") })
+	l.pg.land(0, []netease.Track{fnTrack("a", "晴天", "周杰伦", "flac"), fnTrack("b", "七里香", "周杰伦", "mp3"), fnTrack("c", "宝船", "DOUDOU", "mp3")}, 3)
+	a.fn.lists[l.id] = l
+	a.route = route{page: pagePlaylist, id: l.id}
+	return e, l
+}
+
+// A playlist is made from the name given, and shown, and the songs it was
+// made for go in it; it is the first of the listener's, as the service lists
+// the newest.
+func TestFnCreatePlaylist(t *testing.T) {
+	e, _ := playlistsTestApp(t)
+	a := e.a
+	e.routes["/playlist/create"] = func(url.Values) any { return map[string]any{"guid": "p3", "name": "通勤"} }
+	a.newFnPlaylist([]netease.Track{fnTrack("a", "晴天", "周杰伦", "flac")})
+	if !a.naming.open || !a.naming.fn {
+		t.Fatal("the name is not asked for")
+	}
+	a.naming.name = "  跑步  "
+	a.submitName()
+	e.drain(t, 1)
+	if a.naming.open || a.fn.playlists[0].Ref != "p3" || len(a.fn.playlists) != 3 {
+		t.Fatalf("dialog open %v, playlists %+v", a.naming.open, a.fn.playlists)
+	}
+	if a.route != (route{page: pagePlaylist, id: fnmusic.ID("p3")}) {
+		t.Errorf("route %+v", a.route)
+	}
+	e.drain(t, 2) // the songs added, and the first page of the new playlist
+	posts := e.asks("POST /playlist/")
+	if len(posts) != 2 || !strings.Contains(posts[0], `"name":"跑步"`) ||
+		!strings.Contains(posts[1], "add-track") || !strings.Contains(posts[1], `"guid":"p3"`) || !strings.Contains(posts[1], `"trackGUIDs":["a"]`) {
+		t.Errorf("asked %q", posts)
+	}
+	// A name that is blank asks nothing.
+	a.newFnPlaylist(nil)
+	a.naming.name = "   "
+	a.submitName()
+	if len(e.asks("POST /playlist/create")) != 0 || a.naming.busy {
+		t.Error("a blank name was sent")
+	}
+}
+
+// Renaming shows at once, and is taken back if the service refuses.
+func TestFnRenamePlaylist(t *testing.T) {
+	e, l := playlistsTestApp(t)
+	a := e.a
+	pl, _ := a.fnPlaylist(l.id)
+	a.startFnRename(pl)
+	if a.naming.name != "通勤" || a.naming.rename != l.id {
+		t.Fatalf("dialog %+v", a.naming)
+	}
+	a.naming.name = "上班"
+	a.submitName()
+	if got, _ := a.fnPlaylist(l.id); got.Name != "上班" || l.name != "上班" {
+		t.Errorf("not renamed at once: %q, list %q", got.Name, l.name)
+	}
+	e.drain(t, 1)
+	if posts := e.asks("POST /playlist/edit"); len(posts) != 1 || !strings.Contains(posts[0], `"guid":"p1"`) || !strings.Contains(posts[0], `"name":"上班"`) {
+		t.Errorf("asked %q", posts)
+	}
+	// Refused: the name before comes back, which is the last that took.
+	e.routes["/playlist/edit"] = func(url.Values) any { return errors.New("no") }
+	a.startFnRename(pl)
+	a.naming.name = "又改"
+	a.submitName()
+	if got, _ := a.fnPlaylist(l.id); got.Name != "又改" {
+		t.Fatalf("not renamed at once: %q", got.Name)
+	}
+	e.drain(t, 1)
+	if got, _ := a.fnPlaylist(l.id); got.Name != "上班" || l.name != "上班" || a.toast == "" {
+		t.Errorf("name %q, list %q, toast %q", got.Name, l.name, a.toast)
+	}
+}
+
+// Deleting asks first, takes the playlist out of the sidebar at once and the
+// listener from its page, and brings it back if the service refuses.
+func TestFnDeletePlaylist(t *testing.T) {
+	e, l := playlistsTestApp(t)
+	a := e.a
+	a.history = []route{{page: pageFnAlbums}, a.route}
+	pl, _ := a.fnPlaylist(l.id)
+	a.confirmFnDelete(pl)
+	if !a.deleting.open || !a.deleting.fn || a.deleting.name != "通勤" {
+		t.Fatalf("not asked: %+v", a.deleting)
+	}
+	a.deleteChosen()
+	if len(a.fn.playlists) != 1 || a.route.page != pageFnAlbums || len(a.history) != 0 {
+		t.Errorf("playlists %d, route %+v, history %v", len(a.fn.playlists), a.route, a.history)
+	}
+	e.drain(t, 2) // the delete's, and the albums page it left for asking for its own
+	if posts := e.asks("POST /playlist/delete"); len(posts) != 1 || !strings.Contains(posts[0], `"guid":"p1"`) {
+		t.Errorf("asked %q", posts)
+	}
+	// Refused: it comes back where it was.
+	e.routes["/playlist/delete"] = func(url.Values) any { return errors.New("no") }
+	pl2, _ := a.fnPlaylist(fnmusic.ID("p2"))
+	a.confirmFnDelete(pl2)
+	a.deleteChosen()
+	e.drain(t, 1)
+	if len(a.fn.playlists) != 1 || a.fn.playlists[0].Ref != "p2" || a.toast == "" {
+		t.Errorf("playlists %+v, toast %q", a.fn.playlists, a.toast)
+	}
+}
+
+// From a song's menu in the library, a song goes in a playlist of the
+// listener's, or a new one; and the menu of a playlist's own song offers
+// taking it out, and not putting it in the playlist it is in.
+func TestFnSongMenuPlaylists(t *testing.T) {
+	e, l := playlistsTestApp(t)
+	a := e.a
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if err := tt.RightClick("宝船"); err != nil {
+		t.Fatal(err)
+	}
+	// In a playlist, the one it is in is not offered, the other is.
+	if err := tt.ChooseMenuItem("添加到歌单", "通勤"); err == nil {
+		t.Error("offered to add the song to the playlist it is in")
+	}
+	if err := tt.ChooseMenuItem("添加到歌单", "睡前"); err != nil {
+		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	}
+	tt.Frame()
+	e.drain(t, 1)
+	if posts := e.asks("POST /playlist/add-track"); len(posts) != 1 || !strings.Contains(posts[0], `"guid":"p2"`) || !strings.Contains(posts[0], `"trackGUIDs":["c"]`) {
+		t.Errorf("asked %q", posts)
+	}
+	// And taken out of this one: at once, and the list is a song shorter.
+	if err := tt.RightClick("七里香"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("从歌单中移除"); err != nil {
+		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	}
+	tt.Frame()
+	if l.pg.len() != 2 {
+		t.Errorf("the list has %d songs", l.pg.len())
+	}
+	e.drain(t, 1)
+	if posts := e.asks("POST /playlist/remove-track"); len(posts) != 1 || !strings.Contains(posts[0], `"guid":"p1"`) || !strings.Contains(posts[0], `"trackGUIDs":["b"]`) {
+		t.Errorf("asked %q", posts)
+	}
+}
+
+// Taking a song out that the service will not is taken back: the list is
+// read again, with it.
+func TestFnRemoveRefused(t *testing.T) {
+	e, l := playlistsTestApp(t)
+	a := e.a
+	e.routes["/playlist/remove-track"] = func(url.Values) any { return errors.New("no") }
+	a.removeFromFnPlaylist(l, 0)
+	if l.pg.len() != 2 {
+		t.Fatalf("not out at once: %d", l.pg.len())
+	}
+	e.drain(t, 1)
+	if a.fn.lists[l.id] != nil || a.toast == "" {
+		t.Errorf("the list was kept: %v, toast %q", a.fn.lists[l.id] != nil, a.toast)
+	}
+}
+
+// Every song of an album goes in a playlist in one request; the album is the
+// one list read whole, which is short.
+func TestFnAddAlbumToPlaylist(t *testing.T) {
+	e, _ := playlistsTestApp(t)
+	a := e.a
+	album := a.newFnList(fnSpec{typ: listAlbum, ref: "alb"})
+	album.pg = a.trackPager(func(int) ([]netease.Track, int, error) { return nil, 0, errors.New("unexpected request") })
+	album.pg.land(0, []netease.Track{fnTrack("x1", "一", "甲", "mp3"), fnTrack("x2", "二", "甲", "mp3")}, 2)
+	pl, _ := a.fnPlaylist(fnmusic.ID("p2"))
+	a.addListToFnPlaylist(album, pl)
+	e.drain(t, 1)
+	if posts := e.asks("POST /playlist/add-track"); len(posts) != 1 || !strings.Contains(posts[0], `"trackGUIDs":["x1","x2"]`) {
+		t.Errorf("asked %q", posts)
+	}
+}
+
+// A picture chosen is uploaded and made the playlist's cover, which then shows
+// wherever the playlist does; none chosen asks nothing, and a file that is no
+// picture is told so.
+func TestFnPlaylistCover(t *testing.T) {
+	e, l := playlistsTestApp(t)
+	a := e.a
+	real := pickCover
+	defer func() { pickCover = real }()
+
+	pickCover = func() ([]byte, error) { return nil, nil }
+	pl, _ := a.fnPlaylist(l.id)
+	a.changeFnCover(pl)
+	time.Sleep(50 * time.Millisecond)
+	if len(e.asked) != 0 || len(e.posted) != 0 {
+		t.Error("a cover not chosen was asked of the service")
+	}
+
+	pickCover = func() ([]byte, error) { return []byte("not a picture"), nil }
+	a.changeFnCover(pl)
+	e.drain(t, 1)
+	if a.toast != fnmusic.ErrBadCover.Error() {
+		t.Errorf("toast %q", a.toast)
+	}
+
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 64)...)
+	pickCover = func() ([]byte, error) { return png, nil }
+	e.routes["/static/cover/playlist"] = func(url.Values) any { return map[string]any{"coverId": "playlist_c1"} }
+	a.changeFnCover(pl)
+	e.drain(t, 1)
+	if got, _ := a.fnPlaylist(l.id); got.CoverURL != "fnmusic://cover/playlist_c1" || l.cover != got.CoverURL {
+		t.Errorf("cover %q, list %q", got.CoverURL, l.cover)
+	}
+	// The name goes with it, which the service wants for any edit.
+	if posts := e.asks("POST /playlist/edit"); len(posts) != 1 || !strings.Contains(posts[0], `"name":"通勤"`) || !strings.Contains(posts[0], `"coverId":"playlist_c1"`) {
+		t.Errorf("asked %q", posts)
+	}
+}
+
+// A playlist with no cover of its own wears its first song's, in the sidebar
+// and on its page; one that has its own keeps it.
+func TestFnPlaylistsWearTheirFirstSongsCover(t *testing.T) {
+	e, _ := playlistsTestApp(t)
+	a := e.a
+	e.routes["/track/playlist-detail/list"] = func(q url.Values) any {
+		return map[string]any{"total": 1, "list": []map[string]any{{"guid": "s", "title": "歌", "coverId": "track_1", "audioSpec": map[string]any{"format": "mp3"}}}}
+	}
+	lists := []netease.Playlist{
+		{ID: fnmusic.ID("p1"), Ref: "p1", Name: "通勤"},
+		{ID: fnmusic.ID("p2"), Ref: "p2", Name: "睡前", CoverURL: "fnmusic://cover/playlist_own"},
+	}
+	a.fn.playlists = lists
+	a.loadFnCovers(a.fn.client, lists)
+	e.drain(t, 1)
+	if a.fn.playlists[0].CoverURL != "fnmusic://cover/track_1" || a.fn.playlists[1].CoverURL != "fnmusic://cover/playlist_own" {
+		t.Errorf("covers %q, %q", a.fn.playlists[0].CoverURL, a.fn.playlists[1].CoverURL)
 	}
 }

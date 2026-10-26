@@ -127,6 +127,7 @@ func (a *app) loadFnAccount() {
 			}
 			a.fn.err = ""
 			a.fn.playlists = lists
+			a.loadFnCovers(c, lists)
 		})
 	}()
 }

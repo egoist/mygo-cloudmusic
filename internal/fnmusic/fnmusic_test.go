@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -755,5 +756,203 @@ func TestAddressBehindAPathPrefix(t *testing.T) {
 	}
 	if tracks, err := c.allTracks(); err != nil || len(tracks) != 2 {
 		t.Fatalf("%v, %d tracks", err, len(tracks))
+	}
+}
+
+// playlistService is a service that keeps playlists, as the real one does
+// for the calls tried against it: the song added last is first, one that is in
+// already moves to the front, and what is asked of a playlist that is not is
+// refused.
+type playlistService struct {
+	mu      sync.Mutex
+	lists   map[string][]string
+	names   map[string]string
+	covers  map[string]string
+	creates int
+	signed  []string // what the cover upload was signed over
+}
+
+func (p *playlistService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reply := func(code int, data any) {
+		json.NewEncoder(w).Encode(map[string]any{"code": code, "msg": "invalid arguments", "data": data})
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/music/api/v1")
+	if path == "/user/password-login" {
+		reply(0, map[string]string{"userToken": "t"})
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var body struct {
+		GUID, Name, CoverID string
+		TrackGUIDs          []string
+	}
+	if path == "/static/cover/playlist" {
+		r.ParseMultipartForm(1 << 20)
+		f, h, err := r.FormFile("file")
+		if err != nil {
+			reply(1, nil)
+			return
+		}
+		defer f.Close()
+		p.signed = append(p.signed, r.Header.Get("authx"), h.Header.Get("Content-Type"))
+		reply(0, map[string]string{"coverId": "playlist_cover1"})
+		return
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	switch path {
+	case "/playlist/create":
+		p.creates++
+		if body.Name == "" {
+			reply(1, nil)
+			return
+		}
+		guid := "pl" + strconv.Itoa(p.creates)
+		p.lists[guid], p.names[guid] = []string{}, body.Name
+		reply(0, map[string]any{"guid": guid, "name": body.Name, "coverId": nil})
+	case "/playlist/add-track":
+		if _, ok := p.lists[body.GUID]; !ok {
+			reply(1, nil)
+			return
+		}
+		for _, g := range body.TrackGUIDs {
+			rest := p.lists[body.GUID][:0:0]
+			for _, x := range p.lists[body.GUID] {
+				if x != g {
+					rest = append(rest, x)
+				}
+			}
+			p.lists[body.GUID] = append([]string{g}, rest...)
+		}
+		reply(0, nil)
+	case "/playlist/remove-track":
+		var rest []string
+		for _, x := range p.lists[body.GUID] {
+			if !slices.Contains(body.TrackGUIDs, x) {
+				rest = append(rest, x)
+			}
+		}
+		p.lists[body.GUID] = rest
+		reply(0, nil)
+	case "/playlist/edit":
+		// As the real one: an edit with no name is refused, of a cover too.
+		if body.Name == "" {
+			reply(1, nil)
+			return
+		}
+		if body.Name != "" {
+			p.names[body.GUID] = body.Name
+		}
+		if body.CoverID != "" {
+			p.covers[body.GUID] = body.CoverID
+		}
+		reply(0, nil)
+	case "/playlist/delete":
+		delete(p.lists, body.GUID)
+		delete(p.names, body.GUID)
+		reply(0, nil)
+	default:
+		reply(1, nil)
+	}
+}
+
+// The calls that edit playlists say what they should to the service, and what
+// the service refuses is an error.
+func TestPlaylistWrites(t *testing.T) {
+	svc := &playlistService{lists: map[string][]string{}, names: map[string]string{}, covers: map[string]string{}}
+	ts := httptest.NewServer(svc)
+	defer ts.Close()
+	c, _ := New(Config{Address: ts.URL, Username: "me", PassHash: HashPassword("secret")})
+
+	pl, err := c.CreatePlaylist("通勤")
+	if err != nil || pl.Ref != "pl1" || pl.Name != "通勤" || pl.ID != ID("pl1") {
+		t.Fatalf("%+v, %v", pl, err)
+	}
+	if _, err := c.CreatePlaylist(""); err == nil {
+		t.Error("a playlist with no name was made")
+	}
+	if err := c.AddToPlaylist(pl.Ref, []string{"a", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	// One that is in moves to the front, and none is twice.
+	c.AddToPlaylist(pl.Ref, []string{"a"})
+	if got := svc.lists["pl1"]; len(got) != 2 || got[0] != "a" {
+		t.Errorf("songs %v", got)
+	}
+	if err := c.AddToPlaylist("nope", []string{"a"}); err == nil {
+		t.Error("songs were put in a playlist that is not")
+	}
+	c.RemoveFromPlaylist(pl.Ref, []string{"a"})
+	if got := svc.lists["pl1"]; len(got) != 1 || got[0] != "b" {
+		t.Errorf("songs after removing %v", got)
+	}
+	c.RenamePlaylist(pl.Ref, "上班路上")
+	if svc.names["pl1"] != "上班路上" {
+		t.Errorf("name %q", svc.names["pl1"])
+	}
+	if err := c.DeletePlaylist(pl.Ref); err != nil || len(svc.lists) != 0 {
+		t.Errorf("delete: %v, %d left", err, len(svc.lists))
+	}
+}
+
+// A cover is uploaded as a form of one field, signed over {} as the web player
+// signs it, and then made the playlist's; what is no picture is refused before
+// anything is sent.
+func TestPlaylistCover(t *testing.T) {
+	svc := &playlistService{lists: map[string][]string{}, names: map[string]string{}, covers: map[string]string{}}
+	ts := httptest.NewServer(svc)
+	defer ts.Close()
+	c, _ := New(Config{Address: ts.URL, Username: "me", PassHash: HashPassword("secret")})
+	pl, _ := c.CreatePlaylist("x")
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 100)...)
+	id, err := c.SetPlaylistCover(pl.Ref, "x", png)
+	if err != nil || id != "playlist_cover1" || svc.covers[pl.Ref] != "playlist_cover1" {
+		t.Fatalf("%q, %v, cover %q", id, err, svc.covers[pl.Ref])
+	}
+	if len(svc.signed) != 2 || svc.signed[1] != "image/png" || !strings.Contains(svc.signed[0], "sign=") {
+		t.Errorf("upload: %v", svc.signed)
+	}
+	for name, b := range map[string][]byte{"text": []byte("not a picture"), "empty": nil, "too big": make([]byte, MaxCoverBytes+1)} {
+		if _, err := c.SetPlaylistCover(pl.Ref, "x", b); err != ErrBadCover {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Regression guard: making a playlist over FN Connect, when the route
+// failed after the request had gone, asked again over another, and the
+// answer that never came may have been to the first: two playlists were made.
+// Adding songs is asked again, which is safe.
+func TestCreateIsNotAskedTwice(t *testing.T) {
+	var creates, adds atomic.Int32
+	lookup := func(nas *httptest.Server) { lookupFor(t, nas, nil) }
+	mux := http.NewServeMux()
+	cut := func(counter *atomic.Int32) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			// The first is taken and the connection dropped, as a route that
+			// failed after the request went.
+			if counter.Add(1) == 1 {
+				conn, _, _ := w.(http.Hijacker).Hijack()
+				conn.Close()
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"guid": "g", "name": "n"}})
+		}
+	}
+	mux.HandleFunc("/music/api/v1/playlist/create", cut(&creates))
+	mux.HandleFunc("/music/api/v1/playlist/add-track", cut(&adds))
+	mux.Handle("/", &server{})
+	nas := httptest.NewServer(mux)
+	defer nas.Close()
+	lookup(nas)
+	c, _ := New(Config{Mode: ModeFNConnect, Address: "mynas01", Username: "me", PassHash: HashPassword("secret")})
+	if _, err := c.CreatePlaylist("n"); err == nil {
+		t.Error("a create that was cut was asked again")
+	}
+	if creates.Load() != 1 {
+		t.Errorf("%d creates", creates.Load())
+	}
+	if err := c.AddToPlaylist("g", []string{"a"}); err != nil || adds.Load() != 2 {
+		t.Errorf("adding: %v, asked %d times", err, adds.Load())
 	}
 }

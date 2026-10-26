@@ -49,6 +49,13 @@ func (t *testPager) drain(n int) {
 	}
 }
 
+// testTotal sets how many the service says there are.
+func (t *testPager) testTotal(n int) {
+	t.mu.Lock()
+	t.total = n
+	t.mu.Unlock()
+}
+
 func (t *testPager) pagesAsked() []int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -201,5 +208,55 @@ func TestPagerEmpty(t *testing.T) {
 	p.drain(1)
 	if p.len() != 0 || !p.loaded() || p.at(0) != nil {
 		t.Errorf("len %d, loaded %v", p.len(), p.loaded())
+	}
+}
+
+// Taking an item out makes the list shorter by it, and asks again for the
+// pages from its own on, as what was in them has moved up: no row shows what
+// was in another.
+func TestPagerRemoveAt(t *testing.T) {
+	p := newTestPager()
+	p.at(0)
+	p.drain(1)
+	p.at(0)
+	p.drain(2) // pages 1 to 3
+	p.removeAt(150)
+	if p.len() != 999 {
+		t.Fatalf("length %d", p.len())
+	}
+	if p.state[0] != pageHave || p.state[1] != pageNone || p.state[2] != pageNone {
+		t.Errorf("pages %v", p.state[:3])
+	}
+	// The pages before are as they were, and those from its own on are asked
+	// for again when wanted, as the service lists them now: one shorter.
+	p.pager.total = 999
+	p.testTotal(999)
+	p.at(150)
+	p.drain(3)
+	if v := p.at(150); v == nil || *v != 150 {
+		t.Errorf("the page was not read again: %v", v)
+	}
+	// The last item, and one that is not.
+	q := newTestPager()
+	q.at(0)
+	q.drain(1)
+	q.removeAt(-1)
+	q.removeAt(1000)
+	if q.len() != 1000 {
+		t.Errorf("an item that is not was removed: %d", q.len())
+	}
+}
+
+func TestPagerIndexOf(t *testing.T) {
+	p := newTestPager()
+	p.at(0)
+	p.drain(1)
+	if i := p.indexOf(func(v *int) bool { return *v == 42 }); i != 42 {
+		t.Errorf("found at %d", i)
+	}
+	// A song in a page not in is not found, nor is it asked for.
+	n := len(p.pagesAsked())
+	if i := p.indexOf(func(v *int) bool { return *v == 950 }); i != -1 || len(p.pagesAsked()) != n {
+		t.Errorf("found at %d, asked %d more", i, len(p.pagesAsked())-n)
 	}
 }

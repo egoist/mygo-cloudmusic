@@ -112,3 +112,74 @@ func TestLiveTranscode(t *testing.T) {
 		}
 	}
 }
+
+// The playlist calls against a real service, on a playlist made for the test
+// and deleted after it, with songs of the library, which are only listed in
+// it: none of the listener's own playlists or songs is touched.
+func TestLivePlaylists(t *testing.T) {
+	c := liveClient(t)
+	songs, _, err := c.LibraryPage(SortRecent, 1, 3)
+	if err != nil || len(songs) < 3 {
+		t.Fatalf("%d songs, %v", len(songs), err)
+	}
+	pl, err := c.CreatePlaylist("测试用临时歌单（会自动删除）")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := c.DeletePlaylist(pl.Ref); err != nil {
+			t.Errorf("the playlist made for the test was not deleted: %v", err)
+		}
+	}()
+	names := func() []string {
+		got, _, err := c.PlaylistPage(pl.Ref, 1, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, s := range got {
+			out = append(out, s.Ref)
+		}
+		return out
+	}
+	if err := c.AddToPlaylist(pl.Ref, []string{songs[0].Ref, songs[1].Ref}); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); len(got) != 2 {
+		t.Fatalf("after adding two: %v", got)
+	}
+	// Adding one that is in is no error and no second copy; it moves first.
+	if err := c.AddToPlaylist(pl.Ref, []string{songs[1].Ref}); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); len(got) != 2 || got[0] != songs[1].Ref {
+		t.Errorf("after adding one that was in: %v", got)
+	}
+	if err := c.RemoveFromPlaylist(pl.Ref, []string{songs[1].Ref}); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); len(got) != 1 || got[0] != songs[0].Ref {
+		t.Errorf("after removing one: %v", got)
+	}
+	if err := c.RenamePlaylist(pl.Ref, "测试用临时歌单（改名）"); err != nil {
+		t.Fatal(err)
+	}
+	// A cover: any picture the service takes, to which the playlist's name goes.
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 64)...)
+	if _, err := c.SetPlaylistCover(pl.Ref, "测试用临时歌单（改名）", png); err != nil && err != ErrBadCover {
+		t.Logf("a cover of no real picture: %v", err)
+	}
+	lists, err := c.Playlists()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, l := range lists {
+		if l.Ref == pl.Ref {
+			found = l.Name == "测试用临时歌单（改名）"
+		}
+	}
+	if !found {
+		t.Error("the playlist is not listed under its new name")
+	}
+}

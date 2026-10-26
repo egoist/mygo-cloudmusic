@@ -29,6 +29,11 @@ type nameDialog struct {
 	rename int64          // the playlist renamed, or 0 to make one
 	add    *netease.Track // the song to add to the playlist made, if any
 	busy   bool           // NetEase is making the playlist
+	// fn says it is of the Feiniu platform's playlists, whose songs to add
+	// to the one made are fnAdd.
+	fn     bool
+	fnAdd  []netease.Track
+	fnList *fnList // or the songs of this list, all of them
 }
 
 // deleteDialog asks whether to delete one of the listener's playlists.
@@ -36,6 +41,7 @@ type deleteDialog struct {
 	open bool
 	id   int64
 	name string
+	fn   bool // of the Feiniu platform
 }
 
 // editable returns the listener's playlist id if they may edit its songs
@@ -92,6 +98,10 @@ func (a *app) startRename(pl *netease.Playlist) {
 // submitName makes the playlist named, or renames one: at once in the app,
 // as NetEase may refuse, when renaming.
 func (a *app) submitName() {
+	if a.naming.fn {
+		a.submitFnName()
+		return
+	}
 	d := &a.naming
 	name := strings.TrimSpace(d.name)
 	if name == "" || d.busy {
@@ -153,6 +163,10 @@ func (a *app) confirmDelete(pl *netease.Playlist) {
 // the sidebar, leaving its page, and then with NetEase, which may refuse:
 // it comes back then.
 func (a *app) deleteChosen() {
+	if a.deleting.fn {
+		a.deleteFnChosen()
+		return
+	}
 	id := a.deleting.id
 	a.deleting.open = false
 	i := slices.IndexFunc(a.mine, func(pl netease.Playlist) bool { return pl.ID == id })
@@ -248,8 +262,13 @@ func (a *app) removeFrom(pid int64, tr *netease.Track) {
 // listener's playlists, or take it out of pid, the one it is listed in, if
 // set.
 func (a *app) playlistItems(m *ui.Menu, tr *netease.Track, pid int64) {
-	// NetEase's playlists take no song of another source.
-	if a.profile == nil || tr.Source != "" {
+	// A song of another source goes in that source's playlists, and NetEase's
+	// take none of them.
+	if tr.Source != "" {
+		a.fnPlaylistItems(m, tr, pid)
+		return
+	}
+	if a.profile == nil {
 		return
 	}
 	m.Separator()

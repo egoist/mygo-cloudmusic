@@ -207,6 +207,13 @@ func readQuery(q url.Values) string {
 
 // request builds a signed request of the service's API.
 func (c *Client) request(method, path string, q url.Values, body []byte, token string) (*http.Request, error) {
+	return c.requestWith(method, path, q, body, "application/json", string(body), token)
+}
+
+// requestWith is request for a body that is not JSON: its content type, and
+// what the signature is of, which for a form is not the body. The web player
+// signs what JSON.stringify makes of its FormData, which is {}.
+func (c *Client) requestWith(method, path string, q url.Values, body []byte, contentType, signedBody, token string) (*http.Request, error) {
 	ep, err := c.endpoint()
 	if err != nil {
 		return nil, err
@@ -227,7 +234,7 @@ func (c *Client) request(method, path string, q url.Values, body []byte, token s
 	signed := full[strings.LastIndex(full, apiPath):]
 	payload := readQuery(q)
 	if method != http.MethodGet {
-		payload = string(body)
+		payload = signedBody
 	}
 	nonce := fmt.Sprintf("%06d", 100000+randomN(900000))
 	req.Header.Set("authx", signature(signed, payload, nonce, time.Now().UnixMilli()))
@@ -235,7 +242,7 @@ func (c *Client) request(method, path string, q url.Values, body []byte, token s
 	req.Header.Set("Accept-Language", "zh-CN")
 	req.Header.Set("User-Agent", netease.UserAgent)
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	var cookies []string
 	if token != "" {
@@ -265,13 +272,20 @@ func (c *Client) accessHeaders(h http.Header) {
 // network changes, the route that answered is gone), so a request that
 // could not get through finds the NAS again, once.
 func (c *Client) send(build func() (*http.Request, error)) (*http.Response, error) {
+	return c.sendWith(build, true)
+}
+
+// sendWith is send, which asks again over another route only if replay: a
+// request that makes something (a playlist) is not asked twice, as the
+// answer that did not come may have been to the first.
+func (c *Client) sendWith(build func() (*http.Request, error), replay bool) (*http.Response, error) {
 	for retry := false; ; retry = true {
 		req, err := build()
 		if err != nil {
 			return nil, err
 		}
 		res, err := c.http.Do(req)
-		if err != nil && !retry && c.cfg.Mode == ModeFNConnect && routeFailure(err) {
+		if err != nil && replay && !retry && c.cfg.Mode == ModeFNConnect && routeFailure(err) {
 			c.Invalidate()
 			continue
 		}
@@ -409,18 +423,29 @@ func (c *Client) Logout() {
 // call asks the service, and reads the data of its reply into out. A
 // session that ended is signed in again, once.
 func (c *Client) call(method, path string, q url.Values, payload any, out any) error {
+	return c.callWith(true, method, path, q, payload, out)
+}
+
+// callWith is call, which does not go over another route if not replay.
+func (c *Client) callWith(replay bool, method, path string, q url.Values, payload any, out any) error {
 	var body []byte
 	if payload != nil {
 		body, _ = json.Marshal(payload)
 	}
+	return c.callBody(replay, method, path, q, func(token string) (*http.Request, error) {
+		return c.request(method, path, q, body, token)
+	}, out)
+}
+
+// callBody asks as build makes the request, signed in, and once more signed
+// in again if the session ended.
+func (c *Client) callBody(replay bool, method, path string, q url.Values, build func(token string) (*http.Request, error), out any) error {
 	for retry := false; ; retry = true {
 		token, err := c.session()
 		if err != nil {
 			return err
 		}
-		res, err := c.send(func() (*http.Request, error) {
-			return c.request(method, path, q, body, token)
-		})
+		res, err := c.sendWith(func() (*http.Request, error) { return build(token) }, replay)
 		if err == nil {
 			err = decode(res, out)
 		}

@@ -213,6 +213,43 @@ func (p *pager[T]) retry() {
 	p.err = ""
 }
 
+// indexOf returns the position of the first item among those in that match,
+// or -1, without asking for any page.
+func (p *pager[T]) indexOf(match func(*T) bool) int {
+	for pg, s := range p.state {
+		if s != pageHave {
+			continue
+		}
+		for i := pg * p.size; i < min((pg+1)*p.size, p.total); i++ {
+			if match(&p.items[i]) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// removeAt takes item i out of the list, as the list is shorter by it on the
+// service: the pages from its own on are asked for again, as what is in them
+// has moved up by one, and what was on its way is let go of.
+func (p *pager[T]) removeAt(i int) {
+	if i < 0 || i >= p.total {
+		return
+	}
+	copy(p.items[i:], p.items[i+1:])
+	p.total--
+	p.items = p.items[:p.total]
+	p.gen++
+	p.inflight = 0
+	if n := p.pages(); n < len(p.state) {
+		p.state = p.state[:n]
+	}
+	for k := i / p.size; k < len(p.state); k++ {
+		p.state[k] = pageNone
+	}
+	p.waiters = nil
+}
+
 // loaded reports whether every page is in.
 func (p *pager[T]) loaded() bool {
 	if p.total < 0 {

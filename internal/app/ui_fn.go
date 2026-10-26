@@ -32,7 +32,59 @@ func (a *app) fnNav(c *ui.Context) {
 	if a.onSearchPage() {
 		a.navItem(c, iconSearch, "搜索结果", route{page: pageSearch})
 	}
-	a.myPlaylists(c, "歌单", a.fn.playlists, false, nil)
+	a.fnSidebarPlaylists(c)
+}
+
+// fnSidebarPlaylists lists the listener's playlists on the service in the
+// sidebar, with a button to make one and a menu on each to rename it, give it
+// a cover or delete it. Without any it is the button alone.
+func (a *app) fnSidebarPlaylists(c *ui.Context) {
+	if a.fn.client == nil {
+		return
+	}
+	p := a.pal
+	ui.Row(c.Key("歌单")).AlignItems(ui.Center).Margin(18, 4, 6, 10).Children(func() {
+		ui.Text(c, "歌单").FontSize(11.5).FontWeight(600).TextColor(p.faint).Grow(1)
+		if iconButton(c.Key("new"), iconPlus, 13, p.faint, "新建歌单").Clicked() {
+			a.newFnPlaylist(nil)
+		}
+	})
+	for i := range a.fn.playlists {
+		pl := a.fn.playlists[i]
+		selected := a.route.page == pagePlaylist && a.route.id == pl.ID && !a.nowPlaying
+		b := ui.ButtonBase(c.Key(pl.ID)).Height(34).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(pl.Name)
+		switch {
+		case selected:
+			b.Background(p.press)
+		case b.Hovered():
+			b.Background(p.hover)
+		}
+		b.Children(func() {
+			a.cover(c, pl.Cover(), 80, 22, 5)
+			ui.Text(c, pl.Name).FontSize(13).SingleLine().Shrink(1).MinWidth(0)
+		})
+		b.ContextMenu(a.fnPlaylistMenu(pl))
+		if b.Clicked() {
+			a.open(route{page: pagePlaylist, id: pl.ID})
+		}
+	}
+}
+
+// fnPlaylistMenu is the menu of one of the listener's playlists: to rename it,
+// give it a cover, or delete it.
+func (a *app) fnPlaylistMenu(pl netease.Playlist) func(m *ui.Menu) {
+	return func(m *ui.Menu) {
+		if m.Item("重命名…").Chosen() {
+			a.startFnRename(pl)
+		}
+		if m.Item("更换封面…").Chosen() {
+			a.changeFnCover(pl)
+		}
+		m.Separator()
+		if m.Item("删除歌单…").Chosen() {
+			a.confirmFnDelete(pl)
+		}
+	}
 }
 
 // fnContent shows the page of the Feiniu platform: its lists, or a way to
@@ -285,6 +337,28 @@ func (a *app) fnHeader(c *ui.Context, l *fnList) {
 				}
 				more := iconButton(c.Key("more"), iconMore, 18, p.muted, "更多")
 				more.Menu(func(m *ui.Menu) {
+					// A playlist of the listener's is theirs to change; an
+					// album or an artist can be put in one of them whole.
+					if pl, ok := a.fnPlaylist(l.id); ok && l.spec.typ == listPlaylist {
+						a.fnPlaylistMenu(pl)(m)
+						m.Separator()
+					}
+					if l.spec.typ == listAlbum || l.spec.typ == listArtist {
+						m.Submenu("全部添加到歌单", func(m *ui.Menu) {
+							if m.Item("新建歌单…").Chosen() {
+								a.newFnPlaylistFrom(l)
+							}
+							if len(a.fn.playlists) > 0 {
+								m.Separator()
+							}
+							for _, pl := range a.fn.playlists {
+								if m.Item(pl.Name).Chosen() {
+									a.addListToFnPlaylist(l, pl)
+								}
+							}
+						})
+						m.Separator()
+					}
 					if l.id == fnmusic.LibraryID {
 						for _, o := range []sortChoice{{fnmusic.SortRecent, "按最近添加排序"}, {fnmusic.SortTitle, "按歌名排序"}} {
 							if m.Item(o.label).Chosen() {

@@ -60,7 +60,7 @@ var (
 func UserError(err error) bool {
 	for _, e := range []error{ErrBadLogin, ErrInvalidID, ErrServerNotFound, ErrInvalidResponse,
 		ErrAccessCodeRequired, ErrAccessCodeRejected, ErrDiscoveryDown, ErrMusicUnavailable, ErrUnreachable,
-		ErrNeedHTTPS, ErrNeedHTTP, ErrCertUntrusted} {
+		ErrNeedHTTPS, ErrNeedHTTP, ErrCertUntrusted, ErrBadCover} {
 		if err == e {
 			return true
 		}

@@ -806,3 +806,69 @@ func TestSplitScheme(t *testing.T) {
 		}
 	}
 }
+
+// The search is a visit, not a place of the sidebar's: its entry is there
+// while the results are shown and goes when the listener leaves them, which
+// it did not, ever, before; and emptying the search box leaves the search for
+// the page before it.
+func TestSearchIsAVisit(t *testing.T) {
+	e := fnTestApp(t)
+	a := e.a
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if _, ok := tt.Find("搜索结果"); ok {
+		t.Fatal("an entry for a search not made")
+	}
+
+	a.query = "周"
+	tt.Frame()
+	a.search("周")
+	tt.Frame()
+	if _, ok := tt.Find("搜索结果"); !ok {
+		t.Error("no entry while the results are shown")
+	}
+	// Leaving for another page takes the entry with it, and back brings both.
+	if err := tt.Click("专辑"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if _, ok := tt.Find("搜索结果"); ok {
+		t.Error("the entry stays after the listener left the results")
+	}
+	a.back()
+	tt.Frame()
+	if a.route.page != pageSearch {
+		t.Fatalf("back did not return to the results: %+v", a.route)
+	}
+	if _, ok := tt.Find("搜索结果"); !ok {
+		t.Error("no entry when back to the results")
+	}
+
+	// Emptying the box leaves them, for the page the search was made from.
+	a.query = ""
+	tt.Frame()
+	if want := (route{page: pagePlaylist, id: fnmusic.LibraryID}); a.route != want {
+		t.Errorf("after emptying the box: %+v, want %+v", a.route, want)
+	}
+	if _, ok := tt.Find("搜索结果"); ok {
+		t.Error("the entry stays after the box was emptied")
+	}
+}
+
+// A search made from a search is the same visit: going back leaves the
+// search, not the one before it.
+func TestSearchAgainDoesNotStack(t *testing.T) {
+	e := fnTestApp(t)
+	a := e.a
+	a.search("一")
+	a.search("二")
+	a.search("三")
+	if len(a.history) != 1 {
+		t.Fatalf("%d pages of history after three searches", len(a.history))
+	}
+	a.back()
+	if a.route.page != pagePlaylist {
+		t.Errorf("back from the searches: %+v", a.route)
+	}
+}

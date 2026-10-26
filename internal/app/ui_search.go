@@ -59,6 +59,14 @@ func (a *app) searchFor(r route) {
 		a.loadSearch(r, true)
 		return
 	}
+	// Searching again while a search (including Feiniu's result pages) is
+	// open replaces that visit, so Back returns to the page before searching.
+	if a.onSearchPage() {
+		a.nowPlaying = false
+		a.forward = nil
+		a.show(r)
+		return
+	}
 	a.open(r)
 }
 

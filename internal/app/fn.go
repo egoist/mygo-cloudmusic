@@ -265,6 +265,7 @@ func (a *app) useSource(src string) {
 	a.settings.save()
 	a.history, a.forward = nil, nil
 	a.nowPlaying = false
+	a.query, a.queryWas = "", ""
 	a.searched = route{}
 	a.fn.search = nil
 	a.show(a.home())

@@ -190,6 +190,11 @@ func (a *app) sidebar(c *ui.Context) {
 	// the title bar it reaches up into would.
 	ui.Column(c).Fill().Padding(top, 14, 14, 14).Gap(4).DragWindow().Children(func() {
 		a.searchField(c)
+		// Emptying the box leaves the search: back to the page before.
+		if a.query == "" && a.queryWas != "" && a.onSearchPage() {
+			a.back()
+		}
+		a.queryWas = a.query
 
 		ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Grow(1).Margin(0, -6).Padding(0, 6).Gap(4).Children(func() {
 			if a.onFn() {
@@ -201,8 +206,8 @@ func (a *app) sidebar(c *ui.Context) {
 			a.navItem(c, iconRadio, "私人 FM", route{page: pageFM})
 			a.navItem(c, iconCharts, "排行榜", route{page: pageCharts})
 			a.navItem(c, iconPodcast, "播客", route{page: pagePodcasts})
-			if a.searched.query != "" {
-				a.navItem(c, iconSearch, "搜索结果", a.searched)
+			if a.onSearchPage() {
+				a.navItem(c, iconSearch, "搜索结果", route{page: pageSearch})
 			}
 			a.myPlaylists(c, "我的歌单", a.mine, true, &a.mineCollapsed)
 			a.myPlaylists(c, "收藏的歌单", a.saved, false, &a.savedCollapsed)
@@ -503,4 +508,14 @@ func firstPlayable(tracks []netease.Track) int {
 		}
 	}
 	return 0
+}
+
+// onSearchPage reports whether a page of search results is shown, including
+// Feiniu's album and artist result pages.
+func (a *app) onSearchPage() bool {
+	switch a.route.page {
+	case pageSearch, pageFnFoundAlbums, pageFnFoundArtists:
+		return true
+	}
+	return false
 }

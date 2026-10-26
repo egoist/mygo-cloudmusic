@@ -29,7 +29,7 @@ func (a *app) fnNav(c *ui.Context) {
 		a.navItem(c, iconHeart, "我喜欢", route{page: pagePlaylist, id: fnmusic.FavoritesID})
 		a.navItem(c, iconRadio, "漫游", route{page: pageFnRoam})
 	}
-	if a.searched.query != "" {
+	if a.onSearchPage() {
 		a.navItem(c, iconSearch, "搜索结果", route{page: pageSearch})
 	}
 	a.myPlaylists(c, "歌单", a.fn.playlists, false, nil)

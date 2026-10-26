@@ -106,6 +106,7 @@ type app struct {
 	searches    map[route]*searchData // the results of each search, by its page
 	searched    route                 // the search last shown, which the sidebar goes back to
 	suggestions suggestState          // what the search field's query may be after
+	queryWas    string                // the query as the last frame had it, to see it emptied
 
 	nowPlaying  bool
 	npOpen      bool      // Now Playing as it last showed: open or not

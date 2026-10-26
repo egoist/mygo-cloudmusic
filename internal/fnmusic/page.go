@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"netease-music-mygo/internal/netease"
 )
@@ -197,3 +198,29 @@ const (
 	SearchAlbumsPath  = "/search/album"
 	SearchArtistsPath = "/search/artist"
 )
+
+// RecentPage returns a page of the songs played, the last first: the
+// listener's play history on the service, which the web player and the other
+// apps of the NAS share.
+func (c *Client) RecentPage(pg, size int) ([]netease.Track, int, error) {
+	return c.tracks("/play-history/list", nil, pg, size)
+}
+
+// RemoveFromHistory takes songs out of the play history. They stay in the
+// library.
+func (c *Client) RemoveFromHistory(songs []string) error {
+	return c.call("POST", "/play-history/delete", nil, map[string]any{"trackGUIDs": songs}, nil)
+}
+
+// ReportPlay tells the service a song was played, as every player of it
+// does as a song starts: it goes in the play history, in front, where one
+// that was in already is moved to. The service does not know what a roam
+// plays, nor what is played by the address of a file, so it is told.
+func (c *Client) ReportPlay(song string) error {
+	event := map[string]any{
+		"eventType":  "track_play",
+		"occurredAt": time.Now().UnixMilli(),
+		"payload":    map[string]string{"trackGUID": song},
+	}
+	return c.call("POST", "/event/report", nil, map[string]any{"events": []any{event}}, nil)
+}

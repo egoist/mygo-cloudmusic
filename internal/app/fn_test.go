@@ -1142,3 +1142,125 @@ func TestFnPlaylistsWearTheirFirstSongsCover(t *testing.T) {
 		t.Errorf("covers %q, %q", a.fn.playlists[0].CoverURL, a.fn.playlists[1].CoverURL)
 	}
 }
+
+// A song of the Feiniu platform is told to the service as it starts, which is
+// what puts it in the play history there; a song of NetEase's is not, nor is
+// anything told without a service. A failure is no matter.
+func TestFnReportsWhatStarts(t *testing.T) {
+	e := fnTestApp(t)
+	a := e.a
+	a.fn.lists[fnmusic.RecentID] = e.seed(fnmusic.RecentID, nil)
+	tr := fnTrack("g9", "晴天", "周杰伦", "flac")
+	a.reportStart(&tr)
+	e.drain(t, 1)
+	posts := e.asks("POST /event/report")
+	if len(posts) != 1 || !strings.Contains(posts[0], `"eventType":"track_play"`) || !strings.Contains(posts[0], `"trackGUID":"g9"`) {
+		t.Fatalf("asked %q", posts)
+	}
+	// The history as shown was read before: it is read anew when next shown.
+	if a.fn.lists[fnmusic.RecentID] != nil {
+		t.Error("the history shown is the old one")
+	}
+
+	other := netease.Track{ID: 5, Name: "宝船"}
+	a.reportStart(&other)
+	time.Sleep(50 * time.Millisecond)
+	if len(e.asks("POST /event/report")) != 0 {
+		t.Error("a song of NetEase's was told to the Feiniu service")
+	}
+	a.fn.client = nil
+	a.reportStart(&tr) // no service: nothing, and no panic
+}
+
+// Reading the play history goes by pages as any list, and is the last played
+// first; a song taken out goes at once, and the service is told.
+func TestFnRecentPage(t *testing.T) {
+	e := fnTestApp(t)
+	a := e.a
+	e.routes["/play-history/list"] = func(q url.Values) any {
+		return map[string]any{"total": 2, "list": []map[string]any{
+			{"guid": "r2", "title": "刚听的", "audioSpec": map[string]any{"format": "mp3"}},
+			{"guid": "r1", "title": "先听的", "audioSpec": map[string]any{"format": "mp3"}},
+		}}
+	}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if err := tt.Click("最近播放"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	e.drain(t, 1)
+	tt.Frame()
+	if a.route != (route{page: pagePlaylist, id: fnmusic.RecentID}) {
+		t.Fatalf("route %+v", a.route)
+	}
+	l := a.fn.lists[fnmusic.RecentID]
+	if l == nil || l.name != "最近播放" || l.pg.len() != 2 {
+		t.Fatalf("list %+v", l)
+	}
+	if _, ok := tt.Find("刚听的"); !ok {
+		t.Error("the history is not shown")
+	}
+	if asked := e.asks("/play-history/list"); len(asked) != 1 || !strings.Contains(asked[0], "page=1") {
+		t.Errorf("asked %q", asked)
+	}
+
+	// Taken out of the history: at once, and the service is told.
+	if err := tt.RightClick("刚听的"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("从最近播放中移除"); err != nil {
+		t.Fatalf("%v; the menu shows %q", err, tt.Menu())
+	}
+	tt.Frame()
+	if l.pg.len() != 1 {
+		t.Errorf("the history has %d songs", l.pg.len())
+	}
+	e.drain(t, 1)
+	if posts := e.asks("POST /play-history/delete"); len(posts) != 1 || !strings.Contains(posts[0], `"trackGUIDs":["r2"]`) {
+		t.Errorf("asked %q", posts)
+	}
+}
+
+// The roam picks songs the queue has already: it is asked on from them, as
+// the queue does not take a song twice and a radio that was given nothing
+// stops. And a chain the service no longer has is begun anew, as the service's
+// own app does.
+func TestFnRoamSkipsWhatIsQueued(t *testing.T) {
+	e := fnTestApp(t)
+	a := e.a
+	step := func(id string) map[string]any {
+		return map[string]any{"roamId": "id-" + id, "track": map[string]any{"guid": id, "title": id, "audioSpec": map[string]any{"format": "mp3"}}}
+	}
+	a.pl.Cue([]netease.Track{fnTrack("r1", "r1", "x", "mp3"), fnTrack("r2", "r2", "x", "mp3")})
+	// After r1 comes r2, which is queued; after that, r3.
+	e.routes["/track/roam-next"] = func(q url.Values) any {
+		if q.Get("relativeRoamId") == "id-r1" {
+			return map[string]any{"current": step("r2")}
+		}
+		return map[string]any{"current": step("r3")}
+	}
+	a.fn.roamID = "id-r1"
+	var got []netease.Track
+	a.roamFeed(func(more []netease.Track) { got = more })
+	for len(got) == 0 {
+		e.drain(t, 1)
+	}
+	if got[0].Ref != "r3" || a.fn.roamID != "id-r3" {
+		t.Errorf("gave %q, roam at %q", got[0].Ref, a.fn.roamID)
+	}
+
+	// A chain gone: the roam begins anew.
+	e.routes["/track/roam-next"] = func(url.Values) any { return errors.New("expired") }
+	e.routes["/track/roam-start"] = func(url.Values) any { return map[string]any{"current": step("n1")} }
+	got = nil
+	a.fn.roamID = "id-stale"
+	a.roamFeed(func(more []netease.Track) { got = more })
+	for len(got) == 0 {
+		e.drain(t, 1)
+	}
+	if got[0].Ref != "n1" || a.fn.roamID != "id-n1" {
+		t.Errorf("gave %q, roam at %q", got[0].Ref, a.fn.roamID)
+	}
+}

@@ -294,14 +294,28 @@ func (a *app) roamFeed(got func([]netease.Track)) {
 		got(nil)
 		return
 	}
+	// What is queued: the roam may pick a song again, which the queue does
+	// not take twice and would stop for, so the chain is asked on from it.
+	queued := map[string]bool{}
+	for _, t := range a.pl.Queue() {
+		queued[t.Ref] = true
+	}
 	go func() {
 		var tr netease.Track
 		var id string
 		var err error
-		if after == "" {
-			tr, id, err = c.RoamStart()
-		} else {
-			tr, id, err = c.RoamNext(after)
+		for range roamTries {
+			if after == "" {
+				tr, id, err = c.RoamStart()
+			} else if tr, id, err = c.RoamNext(after); err != nil {
+				// A chain the service no longer has (it ends in time): a new
+				// one is started.
+				tr, id, err = c.RoamStart()
+			}
+			if err != nil || !queued[tr.Ref] {
+				break
+			}
+			after = id
 		}
 		a.fnPost(func() {
 			if err != nil {
@@ -313,3 +327,7 @@ func (a *app) roamFeed(got func([]netease.Track)) {
 		})
 	}()
 }
+
+// roamTries is how many songs of a roam are asked for to find one that is not
+// queued already, before the queue is given the last.
+const roamTries = 6

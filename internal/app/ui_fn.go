@@ -27,6 +27,7 @@ func (a *app) fnNav(c *ui.Context) {
 		a.navItem(c, iconAlbum, "专辑", route{page: pageFnAlbums})
 		a.navItem(c, iconUser, "歌手", route{page: pageFnArtists})
 		a.navItem(c, iconHeart, "我喜欢", route{page: pagePlaylist, id: fnmusic.FavoritesID})
+		a.navItem(c, iconClock, "最近播放", route{page: pagePlaylist, id: fnmusic.RecentID})
 		a.navItem(c, iconRadio, "漫游", route{page: pageFnRoam})
 	}
 	if a.onSearchPage() {

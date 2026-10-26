@@ -20,6 +20,7 @@ const (
 const (
 	listLibrary   = "library"
 	listFavorites = "favorites"
+	listRecent    = "recent"
 	listPlaylist  = "playlist"
 	listAlbum     = "album"
 	listArtist    = "artist"
@@ -89,6 +90,8 @@ func listID(s fnSpec) int64 {
 		return fnmusic.LibraryID
 	case listFavorites:
 		return fnmusic.FavoritesID
+	case listRecent:
+		return fnmusic.RecentID
 	case listAlbum:
 		return fnmusic.AlbumID(s.ref)
 	case listArtist:
@@ -118,6 +121,9 @@ func (a *app) newFnList(s fnSpec) *fnList {
 	case listFavorites:
 		l.kind, l.name = "飞牛音乐", "我喜欢"
 		l.fetch = func(pg, size int) ([]netease.Track, int, error) { return c.FavoritesPage(pg, size) }
+	case listRecent:
+		l.kind, l.name = "飞牛音乐", "最近播放"
+		l.fetch = func(pg, size int) ([]netease.Track, int, error) { return c.RecentPage(pg, size) }
 	case listAlbum:
 		l.kind = fnmusic.KindAlbum
 		l.fetch = func(pg, size int) ([]netease.Track, int, error) { return c.AlbumPage(s.ref, pg, size) }
@@ -150,6 +156,8 @@ func (a *app) fnListFor(id int64) *fnList {
 		spec = fnSpec{typ: listLibrary, sort: a.fn.libSort}
 	case fnmusic.FavoritesID:
 		spec = fnSpec{typ: listFavorites}
+	case fnmusic.RecentID:
+		spec = fnSpec{typ: listRecent}
 	default:
 		var ok bool
 		if m, ok = a.fnMeta(id); !ok {
@@ -235,6 +243,51 @@ func (a *app) setFnLibSort(sort string) {
 	a.resetListScroll()
 }
 
+// reportStart tells the Feiniu service a song of its own has started, as its
+// players do: it goes in the play history. It is told without waiting, and a
+// failure is no matter, which is not worth a word to the listener or a wait
+// of the music; what the page of the history shows is read anew then.
+func (a *app) reportStart(t *netease.Track) {
+	c := a.fn.client
+	if c == nil || t.Source != fnmusic.Source {
+		return
+	}
+	ref := t.Ref
+	go func() {
+		if c.ReportPlay(ref) != nil {
+			return
+		}
+		a.fnPost(func() {
+			// Read anew when shown; on show, it stays as it is.
+			if a.route.page != pagePlaylist || a.route.id != fnmusic.RecentID {
+				delete(a.fn.lists, fnmusic.RecentID)
+			}
+		})
+	}()
+}
+
+// removeFromRecent takes the song at position i of the play history out of
+// it, at once in the app and then with the service, which may refuse: the
+// list is read anew then.
+func (a *app) removeFromRecent(l *fnList, i int) {
+	c := a.fn.client
+	tr := l.pg.at(i)
+	if c == nil || tr == nil || l.spec.typ != listRecent {
+		return
+	}
+	ref, id := tr.Ref, l.id
+	l.pg.removeAt(i)
+	go func() {
+		err := c.RemoveFromHistory([]string{ref})
+		a.fnPost(func() {
+			if err != nil {
+				delete(a.fn.lists, id)
+				a.toast = "移除失败，请稍后再试"
+			}
+		})
+	}()
+}
+
 // resetListScroll puts the page's list back at its start.
 //
 // It is not done at once: the controls that ask for it (the sort of a list
@@ -247,7 +300,7 @@ func (a *app) resetListScroll() { a.scrollReset = true }
 func (a *app) refreshFn(id int64) {
 	delete(a.fn.lists, id)
 	a.resetListScroll()
-	if id == fnmusic.LibraryID || id == fnmusic.FavoritesID {
+	if id == fnmusic.LibraryID || id == fnmusic.FavoritesID || id == fnmusic.RecentID {
 		return
 	}
 	a.loadFnAccount()

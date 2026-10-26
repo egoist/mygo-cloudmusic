@@ -337,6 +337,13 @@ func (a *app) fnPlaylistItems(m *ui.Menu, tr *netease.Track, pid int64) {
 			}
 		}
 	})
+	if l := a.fn.lists[pid]; l != nil && l.spec.typ == listRecent {
+		if m.Item("从最近播放中移除").Chosen() {
+			if i := l.pg.indexOf(func(t *netease.Track) bool { return t.Ref == tr.Ref }); i >= 0 {
+				a.removeFromRecent(l, i)
+			}
+		}
+	}
 	if l := a.fn.lists[pid]; l != nil && l.spec.typ == listPlaylist {
 		if m.Item("从歌单中移除").Chosen() {
 			// The song's place in the list, among those read.

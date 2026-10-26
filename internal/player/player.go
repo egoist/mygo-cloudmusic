@@ -57,9 +57,14 @@ type Player struct {
 	// queue with an origin plays, and returns true if it made the queue over
 	// itself: a list read as it is played has no whole to shuffle.
 	OnShuffle func(on bool) bool
-	radioGen  int  // counts radios, to drop what an old one gives
-	feeding   bool // the feed is asked
-	awaiting  bool // at the queue's end, for what the feed gives
+	// OnStart, if set, is told when a track starts to play: once for each time
+	// it is loaded, as it first plays, not as a session is restored paused
+	// nor as it repeats, which is where a service is told what is heard.
+	OnStart  func(t *netease.Track)
+	started  bool // OnStart was told of the track loaded
+	radioGen int  // counts radios, to drop what an old one gives
+	feeding  bool // the feed is asked
+	awaiting bool // at the queue's end, for what the feed gives
 
 	track   *netease.Track
 	out     *audio.Player
@@ -529,6 +534,8 @@ func (p *Player) TogglePlay() {
 		out.Play()
 	}
 	p.fade.fade(1, fadeIn, nil)
+	// A session restored paused starts here, when it is played.
+	p.markStarted()
 	p.sync()
 }
 
@@ -658,6 +665,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.at = at
 	t := p.queue[p.order[at]]
 	p.track = &t
+	p.started = false
 	p.loading, p.playing, p.err = true, play, ""
 	p.awaiting = false
 	p.lyrics, p.lyricsLoaded = nil, false
@@ -749,10 +757,23 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			if p.playing {
 				p.out.Play()
 				p.fade.fade(1, fadeIn, nil)
+				p.markStarted()
 			}
 			p.sync()
 		})
 	}()
+}
+
+// markStarted tells OnStart the track has started, if it has not been told.
+func (p *Player) markStarted() {
+	if p.started || p.track == nil {
+		return
+	}
+	p.started = true
+	if p.OnStart != nil {
+		t := *p.track
+		p.OnStart(&t)
+	}
 }
 
 // open opens track t's audio at level: kept in the cache, or else

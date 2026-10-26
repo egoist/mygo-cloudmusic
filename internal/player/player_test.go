@@ -306,3 +306,32 @@ func TestListFrom(t *testing.T) {
 		t.Errorf("queue %v, radio %q", q, p.Radio())
 	}
 }
+
+// OnStart is told once of a track, as it first plays: a session picked up
+// paused is not told, and playing it is; pausing and playing again is not
+// told twice.
+func TestOnStartOncePerTrack(t *testing.T) {
+	ch, p := posted()
+	defer p.out.Close()
+	var told []int64
+	p.OnStart = func(tr *netease.Track) { told = append(told, tr.ID) }
+	// Paused, as a restored session is, and not yet told of.
+	p.playing = false
+	p.TogglePlay()
+	if len(told) != 1 || told[0] != 1 {
+		t.Fatalf("told %v as the track was first played", told)
+	}
+	p.TogglePlay() // pause
+	next(t, ch)
+	p.TogglePlay() // play again
+	if len(told) != 1 {
+		t.Errorf("told %v of a track played again", told)
+	}
+	// Another track, loaded, is told of anew.
+	p.started = false
+	p.markStarted()
+	p.markStarted()
+	if len(told) != 2 {
+		t.Errorf("told %v", told)
+	}
+}

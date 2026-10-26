@@ -3,6 +3,7 @@ package fnmusic
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 	"time"
 )
@@ -181,5 +182,51 @@ func TestLivePlaylists(t *testing.T) {
 	}
 	if !found {
 		t.Error("the playlist is not listed under its new name")
+	}
+}
+
+// A play told to a real service is in the play history, first, and taken out
+// again: of a song that was not in the history already, so that what the
+// listener has played is not touched.
+func TestLivePlayHistory(t *testing.T) {
+	c := liveClient(t)
+	refs := func() []string {
+		got, _, err := c.RecentPage(1, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, s := range got {
+			out = append(out, s.Ref)
+		}
+		return out
+	}
+	before := refs()
+	songs, _, err := c.LibraryPage(SortRecent, 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var song string
+	for _, s := range songs {
+		if !slices.Contains(before, s.Ref) {
+			song = s.Ref
+			break
+		}
+	}
+	if song == "" {
+		t.Skip("every song looked at is in the history already")
+	}
+	defer c.RemoveFromHistory([]string{song})
+	if err := c.ReportPlay(song); err != nil {
+		t.Fatal(err)
+	}
+	if got := refs(); len(got) == 0 || got[0] != song {
+		t.Fatalf("the song is not first in the history: %v", got)
+	}
+	if err := c.RemoveFromHistory([]string{song}); err != nil {
+		t.Fatal(err)
+	}
+	if got := refs(); slices.Contains(got, song) {
+		t.Errorf("the song is in the history still: %v", got)
 	}
 }

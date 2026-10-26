@@ -631,6 +631,7 @@ func ID(guid string) int64 {
 const (
 	LibraryID   int64 = -1
 	FavoritesID int64 = -2
+	RecentID    int64 = -4 // what was played last, as the service keeps it
 )
 
 // Covers are named in URLs of their own: fnmusic://cover/ID.

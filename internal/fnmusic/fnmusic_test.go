@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -954,5 +955,67 @@ func TestCreateIsNotAskedTwice(t *testing.T) {
 	}
 	if err := c.AddToPlaylist("g", []string{"a"}); err != nil || adds.Load() != 2 {
 		t.Errorf("adding: %v, asked %d times", err, adds.Load())
+	}
+}
+
+// A play is told to the service as the event the web player sends, and the
+// play history is read and taken from as the service lists it.
+func TestPlayHistoryCalls(t *testing.T) {
+	var bodies []string
+	var mu sync.Mutex
+	mux := http.NewServeMux()
+	mux.HandleFunc("/music/api/v1/event/report", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, "report "+string(b))
+		mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"code": 0})
+	})
+	mux.HandleFunc("/music/api/v1/play-history/delete", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, "delete "+string(b))
+		mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"code": 0})
+	})
+	mux.HandleFunc("/music/api/v1/play-history/list", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"total": 2, "list": []map[string]any{
+			{"guid": "b", "title": "后听的", "audioSpec": map[string]any{"format": "mp3"}},
+			{"guid": "a", "title": "先听的", "audioSpec": map[string]any{"format": "flac"}},
+		}}})
+	})
+	mux.Handle("/", &server{})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	c, _ := New(Config{Address: ts.URL, Username: "me", PassHash: HashPassword("secret")})
+
+	if err := c.ReportPlay("guid1"); err != nil {
+		t.Fatal(err)
+	}
+	var ev struct {
+		Events []struct {
+			EventType  string
+			OccurredAt int64
+			Payload    map[string]string
+		}
+	}
+	mu.Lock()
+	json.Unmarshal([]byte(strings.TrimPrefix(bodies[0], "report ")), &ev)
+	mu.Unlock()
+	if len(ev.Events) != 1 || ev.Events[0].EventType != "track_play" || ev.Events[0].Payload["trackGUID"] != "guid1" ||
+		time.Since(time.UnixMilli(ev.Events[0].OccurredAt)) > 5*time.Second {
+		t.Errorf("event %+v", ev)
+	}
+	tracks, total, err := c.RecentPage(1, 50)
+	if err != nil || total != 2 || len(tracks) != 2 || tracks[0].Name != "后听的" {
+		t.Errorf("%v, %d, %v", err, total, tracks)
+	}
+	if err := c.RemoveFromHistory([]string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if bodies[1] != `delete {"trackGUIDs":["a"]}` {
+		t.Errorf("asked %q", bodies[1])
 	}
 }

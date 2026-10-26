@@ -228,6 +228,7 @@ func Run() error {
 			a.syncCaptions()
 		}
 		a.pl.OnShuffle = a.fnShuffleToggled
+		a.pl.OnStart = a.reportStart
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
 		a.win = mygo.NewWindow(mygo.WindowOptions{

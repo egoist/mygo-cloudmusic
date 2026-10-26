@@ -80,18 +80,7 @@ func TestRecentPlaysLive(t *testing.T) {
 	if os.Getenv("LIVE") == "" || path == "" {
 		t.Skip()
 	}
-	deviceOnce.Do(func() { deviceID = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123" })
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cookies []*http.Cookie
-	for _, part := range strings.Split(string(b), ";") {
-		if name, value, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
-			cookies = append(cookies, &http.Cookie{Name: name, Value: value, Path: "/"})
-		}
-	}
-	httpClient.Jar.SetCookies(siteURL, cookies)
+	useSession(t, path)
 	plays, err := RecentPlays(20)
 	if err != nil || len(plays) == 0 {
 		t.Fatalf("%d plays, %v", len(plays), err)
@@ -101,5 +90,39 @@ func TestRecentPlaysLive(t *testing.T) {
 	}
 	if plays[0].Track.ID == 0 || plays[0].Device == "" || plays[0].At.Year() < 2020 {
 		t.Fatalf("latest play %+v", plays[0])
+	}
+}
+
+// useSession signs in with the session kept at path.
+func useSession(t *testing.T, path string) {
+	deviceOnce.Do(func() { deviceID = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123" })
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cookies []*http.Cookie
+	for _, part := range strings.Split(strings.TrimSpace(string(b)), ";") {
+		if name, value, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
+			cookies = append(cookies, &http.Cookie{Name: name, Value: value, Path: "/"})
+		}
+	}
+	httpClient.Jar.SetCookies(siteURL, cookies)
+}
+
+func TestVIPSongPlayableLive(t *testing.T) {
+	// A subscriber's VIP songs play: the web API called Stan taken down
+	// (st -100) for a subscriber, and greyed it out, though the eapi
+	// streamed it whole. NM_SESSION must be a subscriber's.
+	path := os.Getenv("NM_SESSION")
+	if os.Getenv("LIVE") == "" || path == "" {
+		t.Skip()
+	}
+	useSession(t, path)
+	songs, err := SongDetails([]int64{17572422})
+	if err != nil || len(songs) != 1 {
+		t.Fatalf("%d songs, %v", len(songs), err)
+	}
+	if !songs[0].Playable() {
+		t.Fatalf("Stan not playable: %+v", songs[0].Privilege)
 	}
 }

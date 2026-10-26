@@ -256,6 +256,9 @@ func PlaylistDetail(id int64) (*Playlist, error) {
 	}
 	p := &res.Playlist
 	withPrivileges(p.Tracks, res.Privileges)
+	// Its privileges mark VIP songs as taken down that a subscriber may
+	// play, as Stan's: the songs' details say right.
+	detailPrivileges(p.Tracks)
 	// Long playlists list only their first tracks in full: the rest by id.
 	if len(p.Tracks) < len(p.TrackIDs) {
 		var ids []int64
@@ -270,7 +273,9 @@ func PlaylistDetail(id int64) (*Playlist, error) {
 	return p, nil
 }
 
-// SongDetails returns the tracks of ids, in their order.
+// SongDetails returns the tracks of ids, in their order. It goes through
+// the eapi: the web API's privileges call some VIP songs taken down for
+// subscribers, whom the eapi streams them to.
 func SongDetails(ids []int64) ([]Track, error) {
 	var out []Track
 	for len(ids) > 0 {
@@ -282,11 +287,15 @@ func SongDetails(ids []int64) ([]Track, error) {
 		}
 		b, _ := json.Marshal(c)
 		var res struct {
+			Code       int         `json:"code"`
 			Songs      []Track     `json:"songs"`
 			Privileges []Privilege `json:"privileges"`
 		}
-		if err := post("/api/v3/song/detail", url.Values{"c": {string(b)}}, &res); err != nil {
+		if err := eapiPost("/api/v3/song/detail", map[string]any{"c": string(b)}, &res); err != nil {
 			return out, err
+		}
+		if res.Code != 200 {
+			return out, fmt.Errorf("netease: song detail: code %d", res.Code)
 		}
 		withPrivileges(res.Songs, res.Privileges)
 		out = append(out, res.Songs...)

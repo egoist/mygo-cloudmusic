@@ -11,11 +11,15 @@ import (
 )
 
 // liveFn is a client of the Feiniu service FN_ADDR names, as FN_USER with
-// FN_PASS; without them the tests that play from one skip.
+// FN_PASS. The tests that play from one skip unless LIVE is set, and the
+// three are.
 func liveFn(t *testing.T) *fnmusic.Client {
+	if os.Getenv("LIVE") == "" {
+		t.Skip()
+	}
 	addr, user, pass := os.Getenv("FN_ADDR"), os.Getenv("FN_USER"), os.Getenv("FN_PASS")
 	if addr == "" || user == "" {
-		t.Skip("FN_ADDR, FN_USER and FN_PASS name a service to play from")
+		t.Skip("LIVE is set, but FN_ADDR, FN_USER and FN_PASS do not name a service to play from")
 	}
 	c, err := fnmusic.New(fnmusic.Config{Address: addr, Username: user, PassHash: fnmusic.HashPassword(pass)})
 	if err != nil {

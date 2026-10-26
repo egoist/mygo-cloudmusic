@@ -8,12 +8,15 @@ import (
 )
 
 // liveClient is a client of the service FN_ADDR names, as FN_USER with
-// FN_PASS; the live tests skip without them, as the others that need a
-// service of someone's.
+// FN_PASS. The live tests, which need a Feiniu NAS of someone's, skip unless
+// LIVE is set, and the three are.
 func liveClient(t *testing.T) *Client {
+	if os.Getenv("LIVE") == "" {
+		t.Skip()
+	}
 	addr, user, pass := os.Getenv("FN_ADDR"), os.Getenv("FN_USER"), os.Getenv("FN_PASS")
 	if addr == "" || user == "" {
-		t.Skip("FN_ADDR, FN_USER and FN_PASS name a service to try")
+		t.Skip("LIVE is set, but FN_ADDR, FN_USER and FN_PASS do not name a service to try")
 	}
 	c, err := New(Config{Address: addr, Username: user, PassHash: HashPassword(pass)})
 	if err != nil {

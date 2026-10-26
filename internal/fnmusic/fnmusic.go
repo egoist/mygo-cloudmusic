@@ -37,7 +37,11 @@ type Config struct {
 	Mode string `json:"mode,omitempty"`
 	// Address is where the service is: a host, host:port, or a URL; or, in
 	// ModeFNConnect, the FN ID of the NAS.
-	Address  string `json:"address"`
+	Address string `json:"address"`
+	// HTTPS says the address is reached over HTTPS, which the listener
+	// chooses: an address with no scheme is taken for what this says, and
+	// one with a scheme for its own.
+	HTTPS    bool   `json:"https,omitempty"`
 	Username string `json:"username"`
 	// DeviceID names this app to the service, which knows one session of
 	// each.
@@ -45,7 +49,7 @@ type Config struct {
 	// PassHash and AccessCode are secrets, which the app keeps in the
 	// system's credential store, not with the rest.
 	PassHash string `json:"-"`
-	// AccessCode is the code an FN Connect NAS may ask for, or "".
+	// AccessCode is the code a NAS with an access code asks for, or "".
 	AccessCode string `json:"-"`
 }
 
@@ -121,7 +125,7 @@ func New(cfg Config) (*Client, error) {
 		}
 		c.cfg.Address = id
 	} else {
-		base, err := parseAddress(cfg.Address)
+		base, err := parseAddress(cfg.Address, cfg.HTTPS)
 		if err != nil {
 			return nil, err
 		}
@@ -136,15 +140,20 @@ func New(cfg Config) (*Client, error) {
 // Config returns the config the client was made with.
 func (c *Client) Config() Config { return c.cfg }
 
-// parseAddress reads where the service is, from what a listener types:
-// no scheme means http, as a NAS at home has no certificate.
-func parseAddress(addr string) (*url.URL, error) {
+// parseAddress reads where the service is, from what a listener types. An
+// address with no scheme takes the one the listener chose: HTTP, or HTTPS
+// if https is set.
+func parseAddress(addr string, https bool) (*url.URL, error) {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		return nil, errors.New("fnmusic: no address")
 	}
 	if !strings.Contains(addr, "://") {
-		addr = "http://" + addr
+		scheme := "http://"
+		if https {
+			scheme = "https://"
+		}
+		addr = scheme + addr
 	}
 	u, err := url.Parse(addr)
 	if err != nil || u.Hostname() == "" {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -253,6 +254,9 @@ func (a *app) settingsView(c *ui.Context) {
 			}
 			cfg := a.fn.client.Config()
 			status := "已连接 · " + cfg.Address
+			if cfg.HTTPS && !strings.Contains(cfg.Address, "://") {
+				status = "已连接 · https://" + cfg.Address
+			}
 			if cfg.Mode == fnmusic.ModeFNConnect {
 				status = "已连接 · FN ID " + cfg.Address
 				if r := a.fn.client.Route(); r != "" {

@@ -432,7 +432,7 @@ func (a *app) fnDialog(c *ui.Context) {
 		ui.Text(c, "连接飞牛音乐").FontSize(17).FontWeight(700)
 		sub := "输入 FN ID，在家里或外出都能连接；账号是 NAS 上飞牛音乐的账号"
 		if f.byAddress {
-			sub = "填写飞牛 NAS 上音乐应用的地址与账号"
+			sub = "填写飞牛音乐的地址（IP 或域名，可带端口）与 NAS 上飞牛音乐的账号"
 		}
 		ui.Text(c, sub).FontSize(12.5).TextColor(p.muted).LineHeight(1.4).Margin(-8, 0, 0, 0)
 		mode := 0
@@ -459,13 +459,27 @@ func (a *app) fnDialog(c *ui.Context) {
 			})
 		}
 		if f.byAddress {
-			field("address", "服务器地址", "例如 192.168.1.10:5666", &f.address, false)
+			// The protocol is the listener's to choose: the port a NAS
+			// answers on speaks one of them.
+			ui.Column(c.Key("protocol")).Gap(5).Children(func() {
+				ui.Text(c, "协议").FontSize(12).FontWeight(600).TextColor(p.muted)
+				choice := 0
+				if f.https {
+					choice = 1
+				}
+				if segmentedIn(c.Key("scheme"), &choice, 332, "http", "https") {
+					f.https, f.err = choice == 1, ""
+				}
+			})
+			field("address", "服务器地址", "例如 192.168.1.10:5666 或 nas.example.com", &f.address, false)
 		} else {
 			field("address", "FN ID", "例如 mynas01", &f.address, false)
 		}
 		field("user", "用户名", "", &f.user, false)
 		field("passwd", "密码", "", &f.passwd, true)
-		if !f.byAddress {
+		if f.byAddress {
+			field("code", "访问码（可选）", "NAS 开启了访问码时填写", &f.code, true)
+		} else {
 			field("code", "FN Connect 访问码（可选）", "NAS 开启了访问码时填写", &f.code, true)
 		}
 		if f.err != "" {

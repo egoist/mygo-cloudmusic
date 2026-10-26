@@ -3,6 +3,8 @@ package fnmusic
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -30,12 +32,12 @@ func TestAddress(t *testing.T) {
 		"http://nas/x/music/api/v1":       "http://nas/x/music/api/v1",
 		"https://nas.example.com/proxy/p": "https://nas.example.com/proxy/p/music/api/v1",
 	} {
-		u, err := parseAddress(in)
+		u, err := parseAddress(in, false)
 		if err != nil || u.String() != want {
 			t.Errorf("%q: got %v, %v; want %s", in, u, err, want)
 		}
 	}
-	if _, err := parseAddress("  "); err == nil {
+	if _, err := parseAddress("  ", false); err == nil {
 		t.Error("an empty address was taken")
 	}
 }
@@ -581,5 +583,177 @@ func TestFavoriteComesWithTheTrack(t *testing.T) {
 	json.Unmarshal([]byte(`{"guid":"a","title":"x","isFavorite":true,"audioSpec":{"format":"flac"}}`), &r)
 	if tr, _ := r.track(); !tr.Fav {
 		t.Error("liked song not marked")
+	}
+}
+
+// An address with no scheme takes the protocol the listener chose, and one
+// with a scheme its own, whatever was chosen.
+func TestAddressProtocol(t *testing.T) {
+	for _, c := range []struct {
+		addr  string
+		https bool
+		want  string
+	}{
+		{"192.168.1.2:5666", false, "http://192.168.1.2:5666/music/api/v1"},
+		{"192.168.1.2:5667", true, "https://192.168.1.2:5667/music/api/v1"},
+		{"http://192.168.1.2:5666", true, "http://192.168.1.2:5666/music/api/v1"},
+		{"https://nas.lan:5667/", false, "https://nas.lan:5667/music/api/v1"},
+		// A service the listener put on a domain of their own: no port, the
+		// protocol's own; and behind a reverse proxy, a path before it.
+		{"music.example.com", false, "http://music.example.com/music/api/v1"},
+		{"music.example.com", true, "https://music.example.com/music/api/v1"},
+		{"music.example.com:8443", true, "https://music.example.com:8443/music/api/v1"},
+		{"https://example.com/nas/", false, "https://example.com/nas/music/api/v1"},
+		{"example.com/nas/music", true, "https://example.com/nas/music/api/v1"},
+		{"[fd00::1]:5666", false, "http://[fd00::1]:5666/music/api/v1"},
+	} {
+		u, err := parseAddress(c.addr, c.https)
+		if err != nil || u.String() != c.want {
+			t.Errorf("%q (https %v): %v, %v; want %s", c.addr, c.https, u, err, c.want)
+		}
+	}
+}
+
+func addressClient(t *testing.T, addr string, https bool, code string) *Client {
+	c, err := New(Config{Address: addr, HTTPS: https, Username: "me", PassHash: HashPassword("secret"), AccessCode: code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// A NAS that asks for an access code is reached by its address only with
+// the right one, and the dialog is told which it is that is wrong, not that
+// the password is.
+func TestAddressAccessCode(t *testing.T) {
+	ts := httptest.NewServer(&server{code: "1234"})
+	defer ts.Close()
+	host := strings.TrimPrefix(ts.URL, "http://")
+	if err := addressClient(t, host, false, "").Connect(); err != ErrAccessCodeRequired {
+		t.Errorf("without a code: %v", err)
+	}
+	if err := addressClient(t, host, false, "nope").Connect(); err != ErrAccessCodeRejected {
+		t.Errorf("with a wrong code: %v", err)
+	}
+	c := addressClient(t, host, false, "1234")
+	if err := c.Connect(); err != nil {
+		t.Fatalf("with the code: %v", err)
+	}
+	if _, err := c.allTracks(); err != nil {
+		t.Errorf("the code does not go with the requests after: %v", err)
+	}
+	// A NAS with none needs none given.
+	open := httptest.NewServer(&server{})
+	defer open.Close()
+	if err := addressClient(t, strings.TrimPrefix(open.URL, "http://"), false, "").Connect(); err != nil {
+		t.Errorf("a NAS with no access code: %v", err)
+	}
+}
+
+// The protocol is the listener's to choose, and is told when it is the
+// wrong one: HTTP to a port that speaks TLS, and HTTPS to one that does not,
+// each as its own message rather than a bare 400 or a Go error.
+func TestAddressWrongProtocol(t *testing.T) {
+	plain := httptest.NewServer(&server{})
+	defer plain.Close()
+	tls := httptest.NewTLSServer(&server{})
+	defer tls.Close()
+	plainHost, tlsHost := strings.TrimPrefix(plain.URL, "http://"), strings.TrimPrefix(tls.URL, "https://")
+
+	if err := addressClient(t, plainHost, false, "").Connect(); err != nil {
+		t.Errorf("http to a plain port: %v", err)
+	}
+	// A certificate of its own (httptest's) on an address given as an IP is
+	// taken, as a NAS at home has one.
+	if err := addressClient(t, tlsHost, true, "").Connect(); err != nil {
+		t.Errorf("https to a port with a self-signed certificate: %v", err)
+	}
+	if err := addressClient(t, tlsHost, false, "").Connect(); err != ErrNeedHTTPS {
+		t.Errorf("http to a TLS port: %v", err)
+	}
+	if err := addressClient(t, plainHost, true, "").Connect(); err != ErrNeedHTTP {
+		t.Errorf("https to a plain port: %v", err)
+	}
+}
+
+// A certificate nobody vouches for is taken on the local network, where a
+// NAS has one of its own, and not on a name on the internet: there it is
+// said not to be trusted.
+type tlsState = tls.ConnectionState
+
+func TestCertificateOnlyOnTheLocalNetwork(t *testing.T) {
+	for host, local := range map[string]bool{
+		"192.168.1.10": true, "10.0.0.2": true, "172.16.1.10": true, "127.0.0.1": true, "::1": true,
+		"localhost": true, "nas": true, "nas.local": true, "nas.lan": true, "nas.home": true, "nas.internal": true,
+		"NAS.LOCAL": true, "nas.lan.": true,
+		"nas.example.com": false, "example.com": false, "my-nas.duckdns.org": false, "locally.com": false,
+	} {
+		if got := localHost(host); got != local {
+			t.Errorf("localHost(%q) = %v, want %v", host, got, local)
+		}
+	}
+	tls := httptest.NewTLSServer(&server{})
+	defer tls.Close()
+	cert := tls.Certificate()
+	state := func(name string) tlsState {
+		return tlsState{ServerName: name, PeerCertificates: []*x509.Certificate{cert}}
+	}
+	if err := verifyNamed(state("nas.lan")); err != nil {
+		t.Errorf("a self-signed certificate on the local network: %v", err)
+	}
+	err := verifyNamed(state("nas.example.com"))
+	if err == nil {
+		t.Fatal("a self-signed certificate on a name on the internet was taken")
+	}
+	if got := addressError(err); got != ErrCertUntrusted {
+		t.Errorf("said %v", got)
+	}
+	// And a name on the local network connects over HTTPS, end to end.
+	host := strings.Replace(strings.TrimPrefix(tls.URL, "https://"), "127.0.0.1", "localhost", 1)
+	if err := addressClient(t, host, true, "").Connect(); err != nil {
+		t.Errorf("https to localhost with a self-signed certificate: %v", err)
+	}
+}
+
+// What answers but is not the music service is told so, and what does not
+// answer is told apart from it.
+func TestAddressNotTheMusicService(t *testing.T) {
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<html>some other service</html>"))
+	}))
+	defer web.Close()
+	if err := addressClient(t, strings.TrimPrefix(web.URL, "http://"), false, "").Connect(); err != ErrMusicUnavailable {
+		t.Errorf("another service: %v", err)
+	}
+	gone := httptest.NewServer(&server{})
+	host := strings.TrimPrefix(gone.URL, "http://")
+	gone.Close()
+	if err := addressClient(t, host, false, "").Connect(); err != ErrUnreachable {
+		t.Errorf("nothing there: %v", err)
+	}
+}
+
+// A service behind a reverse proxy, on a domain with a path before it, is
+// reached and signed in to: the signature is of the path from /music/api/v1
+// on, which is what the NAS checks, not the whole of it.
+func TestAddressBehindAPathPrefix(t *testing.T) {
+	var asked atomic.Value
+	inner := &server{}
+	mux := http.NewServeMux()
+	mux.Handle("/nas/", http.StripPrefix("/nas", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Store(r.URL.Path)
+		inner.ServeHTTP(w, r)
+	})))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	c := addressClient(t, strings.TrimPrefix(ts.URL, "http://")+"/nas", false, "")
+	if err := c.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if err := c.Login(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if tracks, err := c.allTracks(); err != nil || len(tracks) != 2 {
+		t.Fatalf("%v, %d tracks", err, len(tracks))
 	}
 }

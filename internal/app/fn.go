@@ -56,8 +56,10 @@ type fnState struct {
 type fnForm struct {
 	open bool
 	// byAddress says the service is reached by its address, rather than
-	// its FN ID. address is that, or the FN ID.
+	// its FN ID. address is that, or the FN ID; https is the protocol chosen
+	// for an address.
 	byAddress                   bool
+	https                       bool
 	address, user, passwd, code string
 	busy                        bool
 	err                         string
@@ -141,8 +143,23 @@ func fnError(err error) string {
 // connected before.
 func (a *app) openFnConnect() {
 	cfg := a.settings.Fn
-	a.fn.form = fnForm{open: true, byAddress: cfg.Mode != fnmusic.ModeFNConnect && cfg.Address != "",
-		address: cfg.Address, user: cfg.Username, gen: a.fn.form.gen + 1}
+	byAddress := cfg.Mode != fnmusic.ModeFNConnect && cfg.Address != ""
+	address, https := splitScheme(cfg.Address, cfg.HTTPS)
+	a.fn.form = fnForm{open: true, byAddress: byAddress, address: address, https: https,
+		user: cfg.Username, gen: a.fn.form.gen + 1}
+}
+
+// splitScheme takes the scheme off an address the listener typed, which says
+// the protocol: https, or http, in place of what was chosen.
+func splitScheme(addr string, https bool) (string, bool) {
+	addr = strings.TrimSpace(addr)
+	switch {
+	case strings.HasPrefix(strings.ToLower(addr), "https://"):
+		return strings.TrimRight(addr[len("https://"):], "/"), true
+	case strings.HasPrefix(strings.ToLower(addr), "http://"):
+		return strings.TrimRight(addr[len("http://"):], "/"), false
+	}
+	return strings.TrimRight(addr, "/"), https
 }
 
 // submitFn signs in with what the dialog holds, and connects the
@@ -153,13 +170,19 @@ func (a *app) submitFn() {
 		return
 	}
 	cfg := fnmusic.Config{
-		Address:  strings.TrimSpace(f.address),
-		Username: strings.TrimSpace(f.user),
-		PassHash: fnmusic.HashPassword(f.passwd),
-		DeviceID: a.settings.Fn.DeviceID,
+		Address:    strings.TrimSpace(f.address),
+		Username:   strings.TrimSpace(f.user),
+		PassHash:   fnmusic.HashPassword(f.passwd),
+		DeviceID:   a.settings.Fn.DeviceID,
+		AccessCode: strings.TrimSpace(f.code),
 	}
-	if !f.byAddress {
-		cfg.Mode, cfg.AccessCode = fnmusic.ModeFNConnect, strings.TrimSpace(f.code)
+	if f.byAddress {
+		// A scheme typed in the address is the protocol, and is shown as
+		// chosen.
+		cfg.Address, cfg.HTTPS = splitScheme(cfg.Address, f.https)
+		f.address, f.https = cfg.Address, cfg.HTTPS
+	} else {
+		cfg.Mode = fnmusic.ModeFNConnect
 	}
 	if cfg.Address == "" || cfg.Username == "" || f.passwd == "" {
 		what := "FN ID"
@@ -180,7 +203,12 @@ func (a *app) submitFn() {
 	f.busy, f.err = true, ""
 	gen := f.gen
 	go func() {
-		err := c.Login()
+		// The address is checked first, which says what is wrong with it:
+		// an access code the NAS wants, a protocol it does not speak.
+		err := c.Connect()
+		if err == nil {
+			err = c.Login()
+		}
 		a.post(func() {
 			f := &a.fn.form
 			if gen != f.gen {

@@ -648,8 +648,21 @@ func TestFnConnectDialogModes(t *testing.T) {
 	if !a.fn.form.byAddress {
 		t.Fatal("the switch did not choose the address")
 	}
+	// An address has its protocol chosen, and may have an access code too.
+	if _, ok := tt.Find("访问码（可选）"); !ok {
+		t.Error("no field for the access code of an address")
+	}
 	if _, ok := tt.Find("FN Connect 访问码（可选）"); ok {
-		t.Error("an access code is asked for an address")
+		t.Error("the access code of FN Connect is asked for an address")
+	}
+	if a.fn.form.https {
+		t.Fatal("the protocol does not start as http")
+	}
+	if err := tt.Click("https"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.fn.form.https {
+		t.Error("the switch did not choose https")
 	}
 	a.submitFn()
 	if a.fn.form.err == "" || a.fn.form.busy {
@@ -768,5 +781,28 @@ func TestFnRoamPage(t *testing.T) {
 	}
 	if _, ok := tt.Find("开始漫游"); !ok {
 		t.Error("no way to start the roam")
+	}
+}
+
+// The scheme typed in an address is the protocol, and the address is kept
+// without it; with none typed, the protocol chosen holds.
+func TestSplitScheme(t *testing.T) {
+	for _, c := range []struct {
+		in    string
+		https bool
+		want  string
+		wantS bool
+	}{
+		{"192.168.1.10:5666", false, "192.168.1.10:5666", false},
+		{"192.168.1.10:5667", true, "192.168.1.10:5667", true},
+		{"https://172.16.1.10:18154", false, "172.16.1.10:18154", true},
+		{"HTTP://nas.example.com/", true, "nas.example.com", false},
+		{" https://nas.example.com/proxy/ ", false, "nas.example.com/proxy", true},
+		{"nas.example.com", true, "nas.example.com", true},
+	} {
+		got, https := splitScheme(c.in, c.https)
+		if got != c.want || https != c.wantS {
+			t.Errorf("splitScheme(%q, %v) = %q, %v; want %q, %v", c.in, c.https, got, https, c.want, c.wantS)
+		}
 	}
 }

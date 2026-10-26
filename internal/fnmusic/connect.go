@@ -35,6 +35,9 @@ var (
 	ErrDiscoveryDown      = errors.New("FN Connect 暂时不可用，请稍后再试")
 	ErrMusicUnavailable   = errors.New("已找到设备，但飞牛音乐服务不可用，请确认已安装并启动")
 	ErrUnreachable        = errors.New("无法连接到设备，请检查网络")
+	ErrNeedHTTPS          = errors.New("这个端口使用 HTTPS，请把协议选为 https")
+	ErrNeedHTTP           = errors.New("这个端口使用 HTTP，请把协议选为 http")
+	ErrCertUntrusted      = errors.New("证书不受信任：自签证书请用 IP 地址访问，或换用 http")
 	errNoCandidates       = ErrInvalidResponse
 	errNoRoam             = errors.New("fnmusic: 漫游暂时没有歌曲")
 )
@@ -56,7 +59,8 @@ var (
 // it is.
 func UserError(err error) bool {
 	for _, e := range []error{ErrBadLogin, ErrInvalidID, ErrServerNotFound, ErrInvalidResponse,
-		ErrAccessCodeRequired, ErrAccessCodeRejected, ErrDiscoveryDown, ErrMusicUnavailable, ErrUnreachable} {
+		ErrAccessCodeRequired, ErrAccessCodeRejected, ErrDiscoveryDown, ErrMusicUnavailable, ErrUnreachable,
+		ErrNeedHTTPS, ErrNeedHTTP, ErrCertUntrusted} {
 		if err == e {
 			return true
 		}
@@ -150,10 +154,98 @@ func (c *Client) Route() string {
 }
 
 // Connect finds the service, which signing in would do as well: for a
-// dialog to say what is wrong before it asks for more.
+// dialog to say what is wrong before it asks for more. An address is
+// checked: that it answers over the protocol chosen, lets the access code
+// through if the NAS has one, and is the music service.
 func (c *Client) Connect() error {
-	_, err := c.endpoint()
-	return err
+	ep, err := c.endpoint()
+	if err != nil {
+		return err
+	}
+	if c.cfg.Mode == ModeFNConnect {
+		return nil
+	}
+	return c.checkAddress(ep)
+}
+
+// checkAddress asks an address whether it is the music service, as probe
+// does an address FN Connect gives, but says why it is not: the NAS wants
+// an access code, the protocol chosen is not the one the port speaks, or its
+// certificate is not trusted.
+func (c *Client) checkAddress(ep endpoint) error {
+	client := &http.Client{Timeout: 10 * time.Second, Transport: c.http.Transport, CheckRedirect: c.http.CheckRedirect}
+	root := (&url.URL{Scheme: ep.base.Scheme, Host: ep.base.Host}).String()
+	do := func(req *http.Request) (*http.Response, error) {
+		c.accessHeaders(req.Header)
+		res, err := client.Do(req)
+		if err != nil {
+			return nil, addressError(err)
+		}
+		// A plain request to a port that speaks TLS is answered, by Go's
+		// and by nginx's servers, with a 400.
+		if res.StatusCode == http.StatusBadRequest && ep.base.Scheme == "http" {
+			res.Body.Close()
+			return nil, ErrNeedHTTPS
+		}
+		return res, nil
+	}
+	req, err := http.NewRequest("GET", root+"/access_code_verify", nil)
+	if err != nil {
+		return err
+	}
+	res, err := do(req)
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	switch {
+	case res.StatusCode/100 == 2 || res.StatusCode == 404:
+		// A NAS of older software has no such address; the config says.
+	case res.StatusCode == 401 || res.StatusCode == 403 || res.StatusCode == 429:
+		if c.cfg.AccessCode != "" {
+			return ErrAccessCodeRejected
+		}
+		return ErrAccessCodeRequired
+	default:
+		return fmt.Errorf("fnmusic: %s", res.Status)
+	}
+
+	path := ep.base.Path + "/sys/config"
+	req, err = http.NewRequest("GET", root+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	nonce := fmt.Sprintf("%06d", 100000+randomN(900000))
+	req.Header.Set("authx", signature(path[strings.LastIndex(path, apiPath):], "", nonce, time.Now().UnixMilli()))
+	if res, err = do(req); err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	var env struct {
+		Code json.Number `json:"code"`
+	}
+	if res.StatusCode/100 != 2 || json.NewDecoder(res.Body).Decode(&env) != nil {
+		return ErrMusicUnavailable
+	}
+	if code, _ := env.Code.Int64(); code != 0 && code != 200 {
+		return ErrMusicUnavailable
+	}
+	return nil
+}
+
+// addressError says in words why a request to an address failed.
+func addressError(err error) error {
+	var unknown x509.UnknownAuthorityError
+	var host x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	switch {
+	case strings.Contains(err.Error(), "server gave HTTP response to HTTPS client"):
+		return ErrNeedHTTP
+	case errors.As(err, &unknown), errors.As(err, &host), errors.As(err, &invalid):
+		return ErrCertUntrusted
+	}
+	return ErrUnreachable
 }
 
 // routeFailure reports whether err says the service could not be got
@@ -169,9 +261,9 @@ func routeFailure(err error) bool {
 }
 
 // newHTTPClient makes the client of the service. A NAS at home answers
-// over HTTPS with a certificate of its own, to an address no authority
-// names: so addresses given as numbers are not verified, as a browser lets
-// its user go on, and names are.
+// over HTTPS with a certificate of its own, which no authority vouches for:
+// so what is on the local network is not verified (see localHost), as a
+// browser lets its user go on, and a name on the internet is.
 func newHTTPClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = &tls.Config{
@@ -191,10 +283,28 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-// verifyNamed verifies a certificate as usual, but for a server given as
-// an IP address.
+// localHost reports whether host is on the local network, where a NAS has
+// a certificate of its own: an IP address (the NAS FN Connect finds by its
+// numbers has one too), localhost, a name with no dot (as a router gives the
+// computers at home), or one that ends as the local networks' do: .local,
+// .lan, .home, .internal.
+func localHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "" || net.ParseIP(host) != nil || host == "localhost" || !strings.Contains(host, ".") {
+		return true
+	}
+	for _, suffix := range []string{".local", ".lan", ".home", ".internal", ".localdomain"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyNamed verifies a certificate as usual, but for a server on the
+// local network.
 func verifyNamed(cs tls.ConnectionState) error {
-	if cs.ServerName == "" || net.ParseIP(cs.ServerName) != nil {
+	if localHost(cs.ServerName) {
 		return nil
 	}
 	if len(cs.PeerCertificates) == 0 {

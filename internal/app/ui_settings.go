@@ -6,6 +6,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"netease-music-mygo/internal/fnmusic"
 )
 
 // openSettings shows the settings window, opening it the first time.
@@ -123,7 +125,7 @@ func (a *app) settingsView(c *ui.Context) {
 		}
 
 		group("播放", func() {
-			row("音质", "无损与 Hi-Res 需要黑胶 VIP，没有时播放所能播放的最高音质；下一首歌曲开始生效", func() {
+			row("音质", "仅网易云音乐：无损与 Hi-Res 需要黑胶 VIP，没有时播放所能播放的最高音质；下一首歌曲开始生效。飞牛音乐按文件原样播放", func() {
 				labels := make([]string, len(qualityLevels))
 				chosen := qualityLevels[2].label
 				for i, q := range qualityLevels {
@@ -234,6 +236,40 @@ func (a *app) settingsView(c *ui.Context) {
 				})
 				if ui.Button(c.Key("logout"), "退出登录").Clicked() {
 					a.signOut()
+				}
+			})
+		})
+
+		group("飞牛音乐", func() {
+			if a.fn.client == nil {
+				row("未连接", "连接后可播放飞牛 NAS 上的音乐库、歌单与喜欢的歌曲", func() {
+					if ui.PrimaryButton(c.Key("fn-connect"), "连接…").Clicked() {
+						a.showMain()
+						a.openFnConnect()
+						a.win.Invalidate()
+					}
+				})
+				return
+			}
+			cfg := a.fn.client.Config()
+			status := "已连接 · " + cfg.Address
+			if cfg.Mode == fnmusic.ModeFNConnect {
+				status = "已连接 · FN ID " + cfg.Address
+				if r := a.fn.client.Route(); r != "" {
+					status += "（" + r + "）"
+				}
+			}
+			if a.fn.err != "" {
+				status = a.fn.err
+			}
+			row(cfg.Username, status, func() {
+				if ui.Button(c.Key("fn-reconnect"), "重新连接…").Clicked() {
+					a.showMain()
+					a.openFnConnect()
+					a.win.Invalidate()
+				}
+				if ui.Button(c.Key("fn-disconnect"), "断开").Clicked() {
+					a.disconnectFn()
 				}
 			})
 		})

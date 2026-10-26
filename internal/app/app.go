@@ -25,6 +25,11 @@ const (
 	pageUser
 	pagePodcast
 	pagePodcasts
+	pageFnAlbums
+	pageFnArtists
+	pageFnFoundAlbums  // the albums a search found, all of them
+	pageFnFoundArtists // and its artists
+	pageFnRoam
 )
 
 type route struct {
@@ -50,6 +55,7 @@ type app struct {
 	history []route
 	forward []route // the pages gone back from, the last first to go to
 
+	fn           fnState // the Feiniu music service, the other source
 	profile      *netease.Profile
 	mine, saved  []netease.Playlist // the listener's playlists: made, and saved
 	recPlaylists []netease.Playlist // the day's playlists picked for the listener
@@ -87,8 +93,11 @@ type app struct {
 	// Where the page and the sidebar are scrolled, kept while Now Playing
 	// covers them, unbuilt.
 	pageScroll ui.ScrollState
-	navScroll  ui.ScrollState
-	scrolled   route // the page trackList and pageScroll are of
+	// scrollReset puts the lists of the page back at their start, as the
+	// next frame begins (resetListScroll).
+	scrollReset bool
+	navScroll   ui.ScrollState
+	scrolled    route // the page trackList and pageScroll are of
 
 	mineCollapsed, savedCollapsed bool
 
@@ -204,6 +213,7 @@ func Run() error {
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
 		a.settings.applyAppearance()
+		a.route = a.home()
 		a.npPane = a.lyricsPaneChosen()
 		// Before the window: on Windows it lays out its content as it is
 		// made, and the view asks the player what plays.
@@ -216,6 +226,7 @@ func Run() error {
 			a.keepSession()
 			a.syncCaptions()
 		}
+		a.pl.OnShuffle = a.fnShuffleToggled
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
 		a.win = mygo.NewWindow(mygo.WindowOptions{
@@ -236,6 +247,7 @@ func Run() error {
 			Content:              ui.View(a.view),
 		})
 		a.setMenu()
+		a.startFn()
 		a.boot()
 		// The notch player is macOS's, over its menu bar: elsewhere it would
 		// hang at the top of the screen as a black box.

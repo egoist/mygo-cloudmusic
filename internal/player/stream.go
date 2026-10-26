@@ -48,6 +48,12 @@ type download struct {
 // startDownload fetches url, of size bytes if known, into part, a file
 // that keep keeps once it has all come in: or into memory, without one.
 func startDownload(url string, size int64, part *os.File, keep func(string, int64) (string, bool)) *download {
+	return startDownloadWith(url, nil, size, part, keep)
+}
+
+// startDownloadWith is startDownload for a source that signs its requests:
+// header makes their headers, anew for each, if set.
+func startDownloadWith(url string, header func() http.Header, size int64, part *os.File, keep func(string, int64) (string, bool)) *download {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &download{size: size, cancel: cancel, users: 2}
 	d.cond.L = &d.mu
@@ -57,7 +63,7 @@ func startDownload(url string, size int64, part *os.File, keep func(string, int6
 	case size > 0:
 		d.data = make([]byte, 0, prealloc(size))
 	}
-	go d.run(ctx, url)
+	go d.run(ctx, url, header)
 	return d
 }
 
@@ -83,7 +89,7 @@ func opened(f *os.File, size int64) *download {
 	return d
 }
 
-func (d *download) run(ctx context.Context, url string) {
+func (d *download) run(ctx context.Context, url string, header func() http.Header) {
 	defer d.release()
 	finish := func(err error) {
 		d.mu.Lock()
@@ -97,19 +103,26 @@ func (d *download) run(ctx context.Context, url string) {
 		return
 	}
 	req.Header.Set("User-Agent", netease.UserAgent)
+	if header != nil {
+		for k, v := range header() {
+			req.Header[k] = v
+		}
+	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		finish(err)
 		return
 	}
-	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
 		finish(errors.New(res.Status))
 		return
 	}
+	body := res.Body
+	defer body.Close()
 	buf := make([]byte, 64<<10)
 	for {
-		n, err := res.Body.Read(buf)
+		n, err := body.Read(buf)
 		if n > 0 {
 			d.write(buf[:n])
 		}

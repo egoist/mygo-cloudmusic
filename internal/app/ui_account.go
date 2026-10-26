@@ -54,8 +54,7 @@ func (a *app) signedIn(prof *netease.Profile) {
 	a.likedPrograms, a.askedPrograms = nil, nil
 	// What the listener may play, and follows, changed: load the pages
 	// again.
-	a.playlists = map[int64]*netease.Playlist{}
-	a.plErr = map[int64]string{}
+	a.forgetNeteaseLists()
 	a.artists, a.albums, a.users, a.podcasts = map[int64]*artistData{}, map[int64]*albumData{}, map[int64]*userData{}, map[int64]*podcastData{}
 	a.podcastTab = &podcastTab{}
 	a.searches = map[route]*searchData{}
@@ -66,6 +65,22 @@ func (a *app) signedIn(prof *netease.Profile) {
 	}
 	a.loadLiked(prof.UserID)
 	a.loadMine(prof.UserID)
+}
+
+// forgetNeteaseLists drops the playlists loaded of NetEase's, which differ
+// by who is signed in. The Feiniu service's, under numbers below zero, are
+// no business of whoever is signed in to NetEase, and may be on show.
+func (a *app) forgetNeteaseLists() {
+	for id := range a.playlists {
+		if id > 0 {
+			delete(a.playlists, id)
+		}
+	}
+	for id := range a.plErr {
+		if id > 0 {
+			delete(a.plErr, id)
+		}
+	}
 }
 
 func (a *app) openLogin() {
@@ -242,34 +257,59 @@ func (a *app) profileName() string {
 	return a.profile.Nickname
 }
 
-// accountRow sits at the foot of the sidebar: who is signed in, with a
-// dropdown to open their page or the settings or sign out, or a way to
-// sign in.
+// accountRow sits at the foot of the sidebar: who listens on the platform
+// shown, with a dropdown to switch platform, open the settings, or sign in
+// or out. It opens the dropdown also when no one is signed in: the platform
+// is switched from there.
 func (a *app) accountRow(c *ui.Context) {
 	p := a.pal
 	b := ui.ButtonBase(c.Key("account")).Height(40).PaddingX(8).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
-	if b.Hovered() || a.accountOpen && a.profile != nil {
+	if b.Hovered() || a.accountOpen {
 		b.Background(p.hover)
 	}
-	if a.profile == nil {
-		a.accountOpen = false
-		b.Label("登录").Children(func() {
-			ui.Box(c).Size(26, 26).Radius(13).Background(p.press).Center().Children(func() {
-				ui.Icon(c, iconUser).Size(14, 14).TextColor(p.muted)
-			})
-			ui.Text(c, "登录网易云音乐").FontSize(13).FontWeight(500).TextColor(p.muted)
+	placeholder := func(icon *ui.SVG) {
+		ui.Box(c).Size(26, 26).Radius(13).Background(p.press).Center().Children(func() {
+			ui.Icon(c, icon).Size(14, 14).TextColor(p.muted)
 		})
-		if b.Clicked() {
-			a.openLogin()
-		}
-		return
 	}
-	prof := a.profile
-	b.Label(prof.Nickname).Expanded(a.accountOpen).Children(func() {
-		a.avatar(c, prof.AvatarURL, 26, p.press)
-		ui.Text(c, prof.Nickname).FontSize(13).FontWeight(600).SingleLine().Grow(1).Shrink(1).MinWidth(0)
-		ui.Icon(c, iconUpDown).Size(13, 13).TextColor(p.faint)
-	})
+	switch {
+	case a.onFn() && a.fn.client != nil:
+		name := a.fn.client.Config().Username
+		b.Label(name).Expanded(a.accountOpen).Children(func() {
+			placeholder(iconServer)
+			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+				ui.Text(c, name).FontSize(13).FontWeight(600).SingleLine()
+				status, color := "飞牛音乐", p.faint
+				if a.fn.err != "" {
+					status, color = "连接失败，点击查看", p.accent
+				}
+				ui.Text(c, status).FontSize(11).TextColor(color).SingleLine()
+			})
+			ui.Icon(c, iconUpDown).Size(13, 13).TextColor(p.faint)
+		})
+	case a.onFn():
+		b.Label("飞牛音乐").Expanded(a.accountOpen).Children(func() {
+			placeholder(iconServer)
+			ui.Text(c, "飞牛音乐（未连接）").FontSize(13).FontWeight(500).TextColor(p.muted).Grow(1).Shrink(1).SingleLine()
+			ui.Icon(c, iconUpDown).Size(13, 13).TextColor(p.faint)
+		})
+	case a.profile != nil:
+		prof := a.profile
+		b.Label(prof.Nickname).Expanded(a.accountOpen).Children(func() {
+			a.avatar(c, prof.AvatarURL, 26, p.press)
+			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+				ui.Text(c, prof.Nickname).FontSize(13).FontWeight(600).SingleLine()
+				ui.Text(c, "网易云音乐").FontSize(11).TextColor(p.faint).SingleLine()
+			})
+			ui.Icon(c, iconUpDown).Size(13, 13).TextColor(p.faint)
+		})
+	default:
+		b.Label("账户").Expanded(a.accountOpen).Children(func() {
+			placeholder(iconUser)
+			ui.Text(c, "网易云音乐（未登录）").FontSize(13).FontWeight(500).TextColor(p.muted).Grow(1).Shrink(1).SingleLine()
+			ui.Icon(c, iconUpDown).Size(13, 13).TextColor(p.faint)
+		})
+	}
 	if b.Clicked() {
 		a.accountOpen = !a.accountOpen
 	}
@@ -277,8 +317,8 @@ func (a *app) accountRow(c *ui.Context) {
 }
 
 // accountMenu drops up from the account row, as wide as it, in the colors
-// of the volume popover: the listener's own page and the settings, then
-// signing out.
+// of the volume popover: the platforms to switch between, the settings,
+// then what signs in or out of the platform shown.
 func (a *app) accountMenu(c *ui.Context, row ui.Element) {
 	pop := popoverColors(a.pal.dark)
 	ui.PopoverBase(c.Key("account-menu"), row, &a.accountOpen, func(panel ui.Element) {
@@ -289,24 +329,75 @@ func (a *app) accountMenu(c *ui.Context, row ui.Element) {
 		if w := row.Bounds().W; w > 0 {
 			panel.Width(w)
 		}
+		ui.Text(c, "音乐平台").FontSize(11).FontWeight(600).TextColor(a.pal.faint).Margin(4, 8, 3, 8)
+		for _, pf := range platforms {
+			chosen := a.settings.Source == pf.source
+			mark := ""
+			if chosen {
+				mark = "✓"
+			}
+			item := a.menuItem(c, pf.icon, pf.name, mark)
+			// The keys start from the platform shown.
+			if chosen {
+				item.AutoFocus()
+			}
+			if item.Clicked() {
+				a.accountOpen = false
+				a.useSource(pf.source)
+			}
+		}
+		ui.Box(c).Height(0.5).Margin(4, 8).Background(pop.edge)
 		shortcut := "Ctrl+,"
 		if runtime.GOOS == "darwin" {
 			shortcut = "⌘,"
 		}
-		if a.menuItem(c, iconUser, "我的主页", "").AutoFocus().Clicked() {
-			a.accountOpen = false
-			a.open(route{page: pageUser, id: a.profile.UserID})
+		if !a.onFn() && a.profile != nil {
+			if a.menuItem(c, iconUser, "我的主页", "").Clicked() {
+				a.accountOpen = false
+				a.open(route{page: pageUser, id: a.profile.UserID})
+			}
 		}
 		if a.menuItem(c, iconSettings, "设置…", shortcut).Clicked() {
 			a.accountOpen = false
 			a.openSettings()
 		}
-		ui.Box(c).Height(0.5).Margin(4, 8).Background(pop.edge)
-		if a.menuItem(c, iconSignOut, "退出登录", "").Clicked() {
-			a.accountOpen = false
-			a.signOut()
+		// What signs in or out is the platform shown's.
+		switch {
+		case a.onFn() && a.fn.client == nil:
+			if a.menuItem(c, iconServer, "连接飞牛音乐…", "").Clicked() {
+				a.accountOpen = false
+				a.openFnConnect()
+			}
+		case a.onFn():
+			if a.menuItem(c, iconServer, "重新连接…", "").Clicked() {
+				a.accountOpen = false
+				a.openFnConnect()
+			}
+			if a.menuItem(c, iconSignOut, "断开飞牛音乐", "").Clicked() {
+				a.accountOpen = false
+				a.disconnectFn()
+			}
+		case a.profile == nil:
+			if a.menuItem(c, iconUser, "登录网易云音乐", "").Clicked() {
+				a.accountOpen = false
+				a.openLogin()
+			}
+		default:
+			if a.menuItem(c, iconSignOut, "退出登录", "").Clicked() {
+				a.accountOpen = false
+				a.signOut()
+			}
 		}
 	})
+}
+
+// platforms are the music platforms the app shows, one at a time.
+var platforms = []struct {
+	source, name string
+	icon         *ui.SVG
+}{
+	{sourceNetease, "网易云音乐", iconNote},
+	{sourceFn, "飞牛音乐", iconServer},
 }
 
 // menuItem is an item of a dropdown: an icon, its label, and the shortcut

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -42,6 +43,40 @@ func (a *app) saveSession() {
 	}
 }
 
+// saveSessionSoon is saveSession for while the app runs on: a queue of a
+// library's thousands of songs is megabytes of JSON, which would hold up
+// a frame or two on the main thread each time, so it is encoded and written
+// on another. Its songs are not changed in place, but its order is, by
+// shuffling: that is copied.
+func (a *app) saveSessionSoon() {
+	s, ok := a.pl.Session()
+	if !ok {
+		return
+	}
+	s.Order = slices.Clone(s.Order)
+	path, err := sessionPath()
+	if err != nil {
+		return
+	}
+	go func() {
+		b, err := json.Marshal(s)
+		if err != nil {
+			return
+		}
+		a.post(func() {
+			if string(b) == a.savedSession {
+				return
+			}
+			a.savedSession = string(b)
+			go func() {
+				if os.WriteFile(path+".part", b, 0o600) == nil {
+					os.Rename(path+".part", path)
+				}
+			}()
+		})
+	}()
+}
+
 // sessionEvery is how long after playback changed, and how often as it
 // plays, the session is kept.
 const sessionEvery = 30 * time.Second
@@ -55,7 +90,7 @@ func (a *app) keepSession() {
 	a.sessionDue = true
 	sessionAfter(sessionEvery, func() {
 		a.sessionDue = false
-		a.saveSession()
+		a.saveSessionSoon()
 		if a.pl.Playing() {
 			a.keepSession()
 		}
@@ -91,5 +126,9 @@ func (a *app) restoreSession() {
 	a.pl.Restore(s)
 	if s.Radio != "" && a.pl.Current() != nil {
 		a.pl.AttachRadio(s.Radio, a.radioFeed(s.Radio))
+	}
+	// A queue read from a list of the Feiniu service goes on reading it.
+	if s.Origin != "" {
+		a.restoreFnOrigin(s.Origin)
 	}
 }

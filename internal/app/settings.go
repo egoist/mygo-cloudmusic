@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/egoist/mygo"
+
+	"netease-music-mygo/internal/fnmusic"
 )
 
 // settings are the listener's choices, kept in settings.json in the user
@@ -63,12 +65,17 @@ type settings struct {
 	CacheMB int `json:"cacheMB"`
 	// SearchHistory keeps submitted keywords, most recent first.
 	SearchHistory []string `json:"searchHistory,omitempty"`
+	// Source is the music the app shows: sourceNetease or sourceFn.
+	Source string `json:"source"`
+	// Fn is how to reach the listener's Feiniu music service, once they
+	// connected it.
+	Fn fnmusic.Config `json:"fn"`
 
 	path string // where they were loaded from, and are saved to
 }
 
 func defaultSettings() settings {
-	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
+	return settings{Source: sourceNetease, NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
 }
 
 func settingsPath() (string, error) {

@@ -64,6 +64,13 @@ func (a *app) searchFor(r route) {
 
 // loadSearch loads the first page of a search, unless it has, or again.
 func (a *app) loadSearch(r route, again bool) {
+	if a.onFn() {
+		if !again && a.fn.search != nil && a.fn.search.name == r.query {
+			return
+		}
+		a.fnSearch(r.query)
+		return
+	}
 	if a.searches[r] != nil && !again {
 		return
 	}

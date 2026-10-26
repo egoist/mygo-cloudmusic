@@ -142,6 +142,31 @@ func TestRadioRefills(t *testing.T) {
 	}
 }
 
+// A list too long to have been loaded goes on with the pages its feed
+// gives, and is no radio: it has no name, and once the feed has nothing
+// more it is let go of, the queue ending where the list does.
+func TestListContinues(t *testing.T) {
+	p := &Player{at: -1}
+	p.Cue([]netease.Track{{ID: 1}, {ID: 2}})
+	pages := [][]netease.Track{{{ID: 3}, {ID: 4}}, nil}
+	asked := 0
+	p.feed = func(got func([]netease.Track)) {
+		asked++
+		got(pages[0])
+		pages = pages[1:]
+	}
+	p.refill()
+	if asked != 1 || len(p.Queue()) != 4 || p.Radio() != "" {
+		t.Fatalf("asked %d, queue %v, radio %q", asked, p.Queue(), p.Radio())
+	}
+	// Near its end again: the list has no more.
+	p.at = 3
+	p.refill()
+	if asked != 2 || p.feed != nil || len(p.Queue()) != 4 {
+		t.Errorf("asked %d, feed set %v, queue %v", asked, p.feed != nil, p.Queue())
+	}
+}
+
 func TestNormGain(t *testing.T) {
 	for _, c := range []struct {
 		st   *netease.Stream
@@ -221,5 +246,63 @@ func TestEndRadio(t *testing.T) {
 	p.refill()
 	if asked != 0 {
 		t.Error("asked the radio after leaving it")
+	}
+}
+
+// Where a queue read as it is played comes from goes in the session, for
+// the app to go on reading it after a restart; and playing something that
+// has no such origin takes it away, as it would take a stale one to the
+// wrong list.
+func TestOriginIsKeptInTheSession(t *testing.T) {
+	p := &Player{at: -1}
+	p.Cue([]netease.Track{{ID: 1}, {ID: 2}})
+	p.origin = func() string { return `{"T":"album"}` }
+	s, ok := p.Session()
+	if !ok || s.Origin != `{"T":"album"}` || !p.HasOrigin() {
+		t.Fatalf("session %+v, has origin %v", s, p.HasOrigin())
+	}
+	p.endRadio()
+	p.origin = nil
+	if s, _ := p.Session(); s.Origin != "" || p.HasOrigin() {
+		t.Errorf("origin %q kept", s.Origin)
+	}
+}
+
+// Shuffle switched on or off over a queue with an origin is the app's to
+// handle, which makes the queue over from the song playing; without an
+// origin the queue is shuffled as ever.
+func TestShuffleHook(t *testing.T) {
+	p := &Player{at: -1}
+	p.Cue([]netease.Track{{ID: 1}, {ID: 2}, {ID: 3}, {ID: 4}, {ID: 5}, {ID: 6}})
+	told := 0
+	p.OnShuffle = func(on bool) bool { told++; return true }
+	p.ToggleShuffle() // no origin: the player's own
+	if told != 0 || !p.Shuffle() {
+		t.Fatalf("told %d without an origin, shuffle %v", told, p.Shuffle())
+	}
+	p.ToggleShuffle()
+	p.origin = func() string { return "x" }
+	before := append([]int(nil), p.order...)
+	p.ToggleShuffle()
+	if told != 1 || !p.Shuffle() {
+		t.Fatalf("told %d, shuffle %v", told, p.Shuffle())
+	}
+	for i, v := range before {
+		if p.order[i] != v {
+			t.Fatal("the player shuffled a queue the app handles")
+		}
+	}
+}
+
+// A queue read from the song playing on has that song alone, then what the
+// list gives; it is no radio.
+func TestListFrom(t *testing.T) {
+	p := &Player{at: -1}
+	p.Cue([]netease.Track{{ID: 1}, {ID: 2}, {ID: 3}})
+	p.at, p.track = 2, &p.queue[2]
+	p.ListFrom(func(got func([]netease.Track)) { got([]netease.Track{{ID: 7}, {ID: 3}, {ID: 8}}) }, func() string { return "o" })
+	q := p.Queue()
+	if len(q) != 3 || q[0].ID != 3 || q[1].ID != 7 || q[2].ID != 8 || p.Radio() != "" || !p.HasOrigin() {
+		t.Errorf("queue %v, radio %q", q, p.Radio())
 	}
 }

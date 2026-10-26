@@ -105,6 +105,9 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 	a.commentsFor(tr)
 	// An episode has what it is about and its captions in place of lyrics;
 	// a song, lyrics in place of those.
+	if a.npPane == paneComments && tr.Source != "" {
+		a.npPane = paneLyrics
+	}
 	switch program := tr.ProgramID != 0; {
 	case program && a.npPane == paneWall:
 		a.npPane = paneQueue

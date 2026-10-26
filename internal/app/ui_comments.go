@@ -40,8 +40,11 @@ const commentPage = 30
 func (a *app) commentsFor(tr *netease.Track) *commentState {
 	cs := &a.comments
 	if cs.track != tr.ID {
-		*cs = commentState{track: tr.ID, thread: tr.Thread()}
-		a.loadComments()
+		*cs = commentState{track: tr.ID}
+		if tr.Source == "" {
+			cs.thread = tr.Thread()
+			a.loadComments()
+		}
 	}
 	return cs
 }

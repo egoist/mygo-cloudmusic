@@ -285,6 +285,12 @@ func drawBars(p *ui.Painter, r ui.Rect, st *barState, n int, color ui.Color, min
 // on a capsule that slides to the next as it changes. It reports whether
 // the user chose another.
 func segmented(c *ui.Context, selected *int, labels ...string) bool {
+	return segmentedIn(c, selected, 0, labels...)
+}
+
+// segmentedIn is segmented stretched to total DIPs across, if that is more
+// than its labels take.
+func segmentedIn(c *ui.Context, selected *int, total float32, labels ...string) bool {
 	t := c.Theme()
 	const height, inset, radius = 24, 2, 6
 	width := float32(0)
@@ -292,6 +298,7 @@ func segmented(c *ui.Context, selected *int, labels ...string) bool {
 		w, _ := c.MeasureText(0, ui.Span{Text: l, Size: 13})
 		width = max(width, w+26)
 	}
+	width = max(width, (total-2*inset)/float32(len(labels)))
 	track, capsule, divider := ui.RGBA(0, 0, 0, 0.06), ui.RGB(255, 255, 255), ui.RGBA(0, 0, 0, 0.13)
 	if t.Dark {
 		track, capsule, divider = ui.RGBA(255, 255, 255, 0.08), ui.RGBA(255, 255, 255, 0.24), ui.RGBA(255, 255, 255, 0.13)

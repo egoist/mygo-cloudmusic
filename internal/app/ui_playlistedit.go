@@ -248,7 +248,8 @@ func (a *app) removeFrom(pid int64, tr *netease.Track) {
 // listener's playlists, or take it out of pid, the one it is listed in, if
 // set.
 func (a *app) playlistItems(m *ui.Menu, tr *netease.Track, pid int64) {
-	if a.profile == nil {
+	// NetEase's playlists take no song of another source.
+	if a.profile == nil || tr.Source != "" {
 		return
 	}
 	m.Separator()

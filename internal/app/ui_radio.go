@@ -28,6 +28,9 @@ func radioLabel(name string) string {
 	if name == heartRadio {
 		return "心动模式"
 	}
+	if name == fnRoamRadio {
+		return "飞牛漫游"
+	}
 	for _, m := range fmModes {
 		if name == fmRadio(m.mode) {
 			return "私人 FM · " + m.label
@@ -61,6 +64,10 @@ func (a *app) likedPlaylist() int64 {
 // cannot.
 func (a *app) radioFeed(name string) func(got func([]netease.Track)) {
 	return func(got func([]netease.Track)) {
+		if name == fnRoamRadio {
+			a.roamFeed(got)
+			return
+		}
 		var fetch func() ([]netease.Track, error)
 		switch {
 		case strings.HasPrefix(name, "fm:"):
@@ -127,7 +134,7 @@ func (a *app) exitRadio() {
 	}
 	a.pl.EndRadio()
 	label := radioLabel(name)
-	if name != heartRadio {
+	if name != heartRadio && name != fnRoamRadio {
 		label = "私人 FM"
 	}
 	a.toast = "已退出" + label

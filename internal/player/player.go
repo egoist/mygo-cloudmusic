@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"errors"
 	"math"
 	"math/rand/v2"
@@ -9,6 +10,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/audio"
 
+	"netease-music-mygo/internal/fnmusic"
 	"netease-music-mygo/internal/lyrics"
 	"netease-music-mygo/internal/netease"
 )
@@ -45,11 +47,19 @@ type Player struct {
 
 	// A radio goes on with the tracks its feed gives, as the queue nears
 	// its end, for as long as nothing else is played.
-	radio    string
-	feed     func(got func([]netease.Track))
-	radioGen int  // counts radios, to drop what an old one gives
-	feeding  bool // the feed is asked
-	awaiting bool // at the queue's end, for what the feed gives
+	radio string
+	feed  func(got func([]netease.Track))
+	// origin, if set, says where a queue read as it is played comes from
+	// (see PlayList), as the app keeps it in the session to go on reading
+	// it after a restart.
+	origin func() string
+	// OnShuffle, if set, is told when shuffle is switched on or off while a
+	// queue with an origin plays, and returns true if it made the queue over
+	// itself: a list read as it is played has no whole to shuffle.
+	OnShuffle func(on bool) bool
+	radioGen  int  // counts radios, to drop what an old one gives
+	feeding   bool // the feed is asked
+	awaiting  bool // at the queue's end, for what the feed gives
 
 	track   *netease.Track
 	out     *audio.Player
@@ -156,6 +166,7 @@ func (p *Player) PlayQueue(tracks []netease.Track, start int) {
 		return
 	}
 	p.endRadio()
+	p.origin = nil
 	start = min(max(start, 0), len(tracks)-1)
 	p.queue = append([]netease.Track(nil), tracks...)
 	p.order = make([]int, len(p.queue))
@@ -169,6 +180,51 @@ func (p *Player) PlayQueue(tracks []netease.Track, start int) {
 	}
 	p.load(start)
 }
+
+// PlayList plays tracks from start as PlayQueue does, and goes on with
+// those more gives as the queue nears its end: the rest of a list too long
+// to have been loaded, which is read as it is played. It is no radio: it
+// has no name, and ends where the list does. more calls got on the main
+// thread, with nothing once the list has no more.
+//
+// origin says where the queue comes from, in words the app reads back (see
+// Session.Origin): it is asked each time the session is kept.
+func (p *Player) PlayList(tracks []netease.Track, start int, more func(got func([]netease.Track)), origin func() string) {
+	if len(tracks) == 0 {
+		return
+	}
+	p.PlayQueue(tracks, start)
+	p.feed, p.origin = more, origin
+	p.refill()
+}
+
+// ListFrom makes the track playing the first of a queue that goes on with
+// what more gives, as PlayList's does, without starting it over: for a
+// list read in another order from here.
+func (p *Player) ListFrom(more func(got func([]netease.Track)), origin func() string) {
+	if p.track == nil {
+		return
+	}
+	p.endRadio()
+	p.queue, p.order, p.at = []netease.Track{*p.track}, []int{0}, 0
+	p.feed, p.origin = more, origin
+	p.refill()
+}
+
+// AttachList makes the queue one that goes on with what more gives, as
+// after restoring a session that played one.
+func (p *Player) AttachList(more func(got func([]netease.Track)), origin func() string) {
+	p.endRadio()
+	p.feed, p.origin = more, origin
+	p.refill()
+}
+
+// SetShuffle sets whether the queue is shuffled, without changing it: one
+// read in a random order is already.
+func (p *Player) SetShuffle(on bool) { p.shuffle = on }
+
+// HasOrigin reports whether the queue is of a list read as it is played.
+func (p *Player) HasOrigin() bool { return p.origin != nil }
 
 // PlayRadio plays tracks in their order, then goes on with those feed
 // gives as the queue nears its end, until something else is played. The
@@ -191,6 +247,7 @@ func (p *Player) RadioFrom(name string, tracks []netease.Track, feed func(got fu
 	if p.track == nil {
 		return
 	}
+	p.origin = nil
 	p.queue, p.order, p.at = []netease.Track{*p.track}, []int{0}, 0
 	p.appendTracks(tracks)
 	p.AttachRadio(name, feed)
@@ -249,6 +306,21 @@ func (p *Player) refill() {
 			return
 		}
 		p.feeding = false
+		if len(more) == 0 && p.radio == "" {
+			// The end of a list, not a radio's want of songs: it plays
+			// out, and stops, or starts over, as any queue does.
+			p.feed = nil
+			if p.awaiting {
+				p.awaiting = false
+				if p.repeat == RepeatAll && len(p.order) > 0 {
+					p.load(0)
+				} else {
+					p.playing = false
+					p.sync()
+				}
+			}
+			return
+		}
 		p.appendTracks(more)
 		switch {
 		case !p.awaiting:
@@ -298,6 +370,9 @@ func (p *Player) shuffleOrder(first int) {
 func (p *Player) ToggleShuffle() {
 	p.shuffle = !p.shuffle
 	if len(p.order) == 0 {
+		return
+	}
+	if p.origin != nil && p.OnShuffle != nil && p.OnShuffle(p.shuffle) {
 		return
 	}
 	cur := p.order[max(p.at, 0)]
@@ -591,7 +666,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.refill()
 
 	go func() {
-		cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600))
+		cover, err := fnmusic.Fetch(netease.Sized(t.Album.PicURL, 600))
 		if err == nil {
 			p.post(func() {
 				if gen == p.gen {
@@ -602,7 +677,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	}()
 
 	go func() {
-		lrc, trans, yrc, err := netease.Lyrics(t.ID)
+		lrc, trans, yrc, err := songLyrics(&t)
 		var lines []lyrics.Line
 		if err == nil {
 			lines = lyrics.Build(lrc, trans, yrc)
@@ -683,10 +758,20 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 // open opens track t's audio at level: kept in the cache, or else
 // streamed into it, and kept once it has all come in.
 func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, error) {
+	if t.Source == fnmusic.Source {
+		if fnmusic.Transcoded(&t) {
+			return openTranscoded(&t)
+		}
+		// The file is what it is: no level to choose.
+		level = "exhigh"
+		if t.Format == "flac" {
+			level = "lossless"
+		}
+	}
 	dl, info, ok := p.Cache.lookup(t.ID, level)
 	if !ok {
 		var err error
-		info, err = netease.SongURL(t.ID, level)
+		info, err = songStream(&t, level)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -700,6 +785,52 @@ func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, e
 	return info, s, nil
 }
 
+// songStream returns where track t streams from, at level if NetEase's.
+func songStream(t *netease.Track, level string) (*netease.Stream, error) {
+	if t.Source != fnmusic.Source {
+		return netease.SongURL(t.ID, level)
+	}
+	c := fnmusic.Current()
+	if c == nil {
+		return nil, fnmusic.ErrSignedOut
+	}
+	return c.Stream(t)
+}
+
+// openTranscoded opens a song the Feiniu service transcodes to MP3, which
+// it hands over in pieces. It is not kept in the cache: a seek asks for the
+// piece it lands in, so that what is kept would be whatever was played.
+func openTranscoded(t *netease.Track) (*netease.Stream, stream, error) {
+	c := fnmusic.Current()
+	if c == nil {
+		return nil, nil, fnmusic.ErrSignedOut
+	}
+	h, err := c.TranscodeHLS(context.Background(), t)
+	if err != nil {
+		return nil, nil, err
+	}
+	s, err := openHLSStream(h)
+	if err != nil {
+		h.Release()
+		return nil, nil, err
+	}
+	return &netease.Stream{Type: "mp3", Level: "exhigh"}, s, nil
+}
+
+// songLyrics returns the lyrics of track t: LRC in the first, and for
+// NetEase's, the translation and the words' timing too.
+func songLyrics(t *netease.Track) (lrc, translation, yrc string, err error) {
+	if t.Source != fnmusic.Source {
+		return netease.Lyrics(t.ID)
+	}
+	c := fnmusic.Current()
+	if c == nil {
+		return "", "", "", fnmusic.ErrSignedOut
+	}
+	lrc, err = c.Lyrics(t.Ref)
+	return lrc, "", "", err
+}
+
 // Session is where playback was left, to pick up again.
 type Session struct {
 	Queue    []netease.Track `json:"queue"`
@@ -709,6 +840,16 @@ type Session struct {
 	Repeat   RepeatMode      `json:"repeat"`
 	Position int64           `json:"position"` // milliseconds
 	Radio    string          `json:"radio,omitempty"`
+	// Origin says where a queue read as it is played comes from, for the
+	// app to go on reading it once the session is picked up.
+	Origin string `json:"origin,omitempty"`
+}
+
+func (p *Player) sessionOrigin() string {
+	if p.origin == nil {
+		return ""
+	}
+	return p.origin()
 }
 
 // Session returns where playback is, or false with nothing queued.
@@ -724,6 +865,7 @@ func (p *Player) Session() (Session, bool) {
 		Repeat:   p.repeat,
 		Position: p.Position().Milliseconds(),
 		Radio:    p.radio,
+		Origin:   p.sessionOrigin(),
 	}, true
 }
 

@@ -84,9 +84,9 @@ func (c *Cache) lookup(id int64, level string) (*download, *netease.Stream, bool
 func (c *Cache) download(id int64, st *netease.Stream) *download {
 	part := c.part(st)
 	if part == nil {
-		return startDownload(st.URL, st.Size, nil, nil)
+		return startDownloadWith(st.URL, st.Header, st.Size, nil, nil)
 	}
-	return startDownload(st.URL, st.Size, part, func(path string, n int64) (string, bool) {
+	return startDownloadWith(st.URL, st.Header, st.Size, part, func(path string, n int64) (string, bool) {
 		return c.keep(id, st, path, n)
 	})
 }

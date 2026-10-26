@@ -50,6 +50,19 @@ type Track struct {
 	ProgramID   int64  `json:"programId,omitempty"`
 	PodcastID   int64  `json:"podcastId,omitempty"`
 	Description string `json:"description,omitempty"`
+	// Source is where the track is from, if not NetEase: the name of
+	// another source (fnmusic.Source), whose Ref names the track there.
+	Source string `json:"src,omitempty"`
+	Ref    string `json:"ref,omitempty"`
+	// Format is the kind of file a track of another source is: mp3, flac.
+	Format string `json:"fmt,omitempty"`
+	// DiscNo and TrackNo place a track of another source in its album.
+	// Cue says the track is one of a CUE sheet's, which the service cuts out
+	// of the one file.
+	Cue     bool `json:"cue,omitempty"`
+	Fav     bool `json:"fav,omitempty"`
+	DiscNo  int  `json:"disc,omitempty"`
+	TrackNo int  `json:"no,omitempty"`
 }
 
 // Privilege is what NetEase lets the listener signed in, or nobody, do
@@ -101,6 +114,9 @@ func (t *Track) Length() time.Duration { return time.Duration(t.Duration) * time
 
 // URL is the track's page on the NetEase website.
 func (t *Track) URL() string {
+	if t.Source != "" {
+		return ""
+	}
 	if t.ProgramID > 0 {
 		return apiBase + "/program?id=" + strconv.FormatInt(t.ProgramID, 10)
 	}
@@ -137,6 +153,12 @@ type Playlist struct {
 	} `json:"trackIds"`
 	// Preview holds a chart's top songs, as its card shows them.
 	Preview []ChartLine `json:"-"`
+	// Ref names a playlist of another source there, where ID is only the
+	// app's own number for it; Kind says what it is, if not a playlist.
+	Ref  string `json:"-"`
+	Kind string `json:"-"`
+	// Sub is what cards show under the name, in place of UpdateFreq.
+	Sub string `json:"-"`
 }
 
 // ChartLine is a song at the top of a chart: its name and its artist.
@@ -388,8 +410,11 @@ var ErrUnavailable = errors.New("this song isn't available to stream")
 
 // Stream is where a track streams from, and what it is.
 type Stream struct {
-	URL  string `json:"-"`
-	Size int64  `json:"size"` // in bytes
+	URL string `json:"-"`
+	// Header, if set, makes the headers a request for the stream carries:
+	// of another source, which signs each of its own.
+	Header func() http.Header `json:"-"`
+	Size   int64              `json:"size"` // in bytes
 	// Type is the format: mp3, or flac for the lossless levels.
 	Type string `json:"type"`
 	// Level is the level served, which may be below the one asked for.
@@ -485,6 +510,10 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 func Sized(pic string, n int) string {
 	if pic == "" {
 		return ""
+	}
+	// A cover of another source asks for a size by itself.
+	if !strings.HasPrefix(pic, "http") {
+		return fmt.Sprintf("%s?size=%d", pic, n)
 	}
 	pic = strings.Replace(pic, "http://", "https://", 1)
 	return fmt.Sprintf("%s?param=%dy%d", pic, n, n)

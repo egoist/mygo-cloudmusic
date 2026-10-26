@@ -65,6 +65,7 @@ func (a *app) view(c *ui.Context) {
 		a.nowPlayingLayer(c, npOpen, npSettled)
 	})
 	a.loginDialog(c)
+	a.fnDialog(c)
 	a.playlistNameDialog(c)
 	a.deletePlaylistDialog(c)
 	if a.toast != "" {
@@ -113,6 +114,9 @@ func (a *app) show(r route) {
 	if r.page == pageSearch {
 		a.query, a.searched = r.query, r
 	}
+	// Put lists back at their start on the next frame. A page can be opened
+	// by a control in the list it is on, while that list is still building.
+	a.scrollReset = true
 	a.load(r)
 }
 
@@ -135,6 +139,14 @@ func (a *app) load(r route) {
 		a.loadPodcast(r.id)
 	case pagePodcasts:
 		a.loadPodcastTab()
+	case pageFnAlbums:
+		if p := a.fnAlbums(); p != nil {
+			p.at(0)
+		}
+	case pageFnArtists:
+		if p := a.fnArtists(); p != nil {
+			p.at(0)
+		}
 	}
 }
 
@@ -180,6 +192,10 @@ func (a *app) sidebar(c *ui.Context) {
 		a.searchField(c)
 
 		ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Grow(1).Margin(0, -6).Padding(0, 6).Gap(4).Children(func() {
+			if a.onFn() {
+				a.fnNav(c)
+				return
+			}
 			a.navItem(c, iconHome, "为你推荐", route{page: pageHome})
 			a.navItem(c, iconDaily, "每日推荐", route{page: pageDaily})
 			a.navItem(c, iconRadio, "私人 FM", route{page: pageFM})
@@ -202,7 +218,7 @@ func (a *app) sidebar(c *ui.Context) {
 
 func (a *app) navItem(c *ui.Context, icon *ui.SVG, label string, r route) {
 	p := a.pal
-	selected := a.route.page == r.page && !a.nowPlaying
+	selected := a.route == r && !a.nowPlaying
 	b := ui.ButtonBase(c.Key(label)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
 	bg := ui.Transparent
 	switch {
@@ -348,6 +364,16 @@ func (a *app) content(c *ui.Context) {
 	}
 	// Pages mark where their content is, as they scroll.
 	a.underTop, a.underBottom = false, false
+	if a.scrollReset {
+		a.scrollReset = false
+		a.trackList, a.pageScroll = ui.ListState{}, ui.ScrollState{}
+		a.fn.albumList, a.fn.artistList = ui.ListState{}, ui.ListState{}
+		a.fn.foundAlbumList, a.fn.foundArtistList = ui.ListState{}, ui.ListState{}
+	}
+	if a.onFn() {
+		a.fnContent(c)
+		return
+	}
 	switch a.route.page {
 	case pageHome:
 		a.homePage(c)
@@ -446,6 +472,10 @@ func (a *app) loadPlaylist(id int64, thenPlay bool) {
 		return
 	}
 	if a.loadingPl[id] {
+		return
+	}
+	if id < 0 {
+		a.openFnList(id, thenPlay)
 		return
 	}
 	a.loadingPl[id] = true

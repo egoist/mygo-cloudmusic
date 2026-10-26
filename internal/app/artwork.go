@@ -14,7 +14,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	_ "golang.org/x/image/webp"
 
-	"netease-music-mygo/internal/netease"
+	"netease-music-mygo/internal/fnmusic"
 )
 
 // artwork is a cover, decoded and ready to draw, with what the player
@@ -123,7 +123,7 @@ const artRelease = 2 * time.Second
 // loadArt fetches the cover at url, as a bitmap to draw and an image to
 // measure.
 func loadArt(url string) (*ui.Bitmap, image.Image, error) {
-	b, err := netease.Fetch(url)
+	b, err := fnmusic.Fetch(url)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -143,7 +143,7 @@ func decodeArt(b []byte) (*ui.Bitmap, image.Image, error) {
 }
 
 func fetchImage(url string) (image.Image, error) {
-	b, err := netease.Fetch(url)
+	b, err := fnmusic.Fetch(url)
 	if err != nil {
 		return nil, err
 	}

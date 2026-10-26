@@ -35,9 +35,11 @@ func (a *app) songItems(tr *netease.Track, pid int64) func(m *ui.Menu) {
 		if m.Item("复制歌名和歌手").Chosen() {
 			copyText(tr.Name + " - " + tr.ArtistNames())
 		}
-		m.Separator()
-		if m.Item("复制链接").Chosen() {
-			copyText(tr.URL())
+		if tr.URL() != "" {
+			m.Separator()
+			if m.Item("复制链接").Chosen() {
+				copyText(tr.URL())
+			}
 		}
 		// Its artists' and album's pages, those NetEase has.
 		linked := tr.Album.ID != 0

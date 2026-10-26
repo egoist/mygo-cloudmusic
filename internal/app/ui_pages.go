@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/fnmusic"
 	"netease-music-mygo/internal/netease"
 	"netease-music-mygo/internal/player"
 )
@@ -260,6 +261,9 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 		})
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
 			kind := "歌单"
+			if pl.Kind != "" {
+				kind = pl.Kind
+			}
 			if pl.UpdateFreq != "" {
 				kind = "榜单 · " + pl.UpdateFreq
 			}
@@ -325,6 +329,16 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 // trackRows lists tracks under a header, which scrolls with them; a click
 // plays the list from the track clicked.
 func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, header func(c *ui.Context), footer ...func(c *ui.Context)) {
+	a.listTracks(c, len(tracks), func(i int) *netease.Track { return &tracks[i] },
+		func(i int) { a.pl.PlayQueue(tracks, i) }, nil, covers, header, footer...)
+}
+
+// listTracks lists n tracks under a header, which scrolls with them: track
+// i is what at returns, nil while it is not in, when pending builds its
+// row, if set; a click plays the list from the track clicked, as play does.
+// Rows out of view are not built, so a list read as it is scrolled to
+// is asked for only what is on view.
+func (a *app) listTracks(c *ui.Context, n int, at func(i int) *netease.Track, play func(i int), pending func(c *ui.Context, i int), covers bool, header func(c *ui.Context), footer ...func(c *ui.Context)) {
 	p := a.pal
 	cur := a.pl.Current()
 	// A song's menu can take it out of the playlist it is listed in.
@@ -339,7 +353,7 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 	// Rows out of view are not built, their marks with them: a list
 	// scrolled away from its start or end has content under the bars.
 	a.underTop, a.underBottom = true, true
-	rows := len(tracks) + 1 + len(footer)
+	rows := n + 1 + len(footer)
 	ui.List(c.Key(a.route), &a.trackList, rows, func(i int) {
 		if i == 0 {
 			ui.Column(c).Children(func() {
@@ -351,12 +365,18 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 		if i == rows-1 {
 			defer a.endMark(c)
 		}
-		if i > len(tracks) {
-			footer[i-len(tracks)-1](c)
+		if i > n {
+			footer[i-n-1](c)
 			return
 		}
 		i--
-		tr := &tracks[i]
+		tr := at(i)
+		if tr == nil {
+			if pending != nil {
+				pending(c, i)
+			}
+			return
+		}
 		playing := cur != nil && cur.ID == tr.ID
 		row := ui.ButtonBase(c.Key(tr.ID)).Height(54).PaddingX(12).Gap(14).Radius(10).AlignItems(ui.Center).FocusRing(false).Label(tr.Name).
 			ContextMenu(a.songItems(tr, pid))
@@ -399,6 +419,13 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					if !tr.Playable() {
 						ui.Text(c, "VIP").FontSize(9).FontWeight(800).TextColor(p.accent).Padding(0, 4).Radius(3).Border(1, p.accent.Alpha(0.6))
+					} else if tr.Source == fnmusic.Source && fnmusic.Transcoded(tr) {
+						// Played as the NAS transcodes it: it starts a little later.
+						label := strings.ToUpper(tr.Format)
+						if label == "" || tr.Cue {
+							label = "转码"
+						}
+						ui.Text(c, label).FontSize(9).FontWeight(800).TextColor(p.faint).Padding(0, 4).Radius(3).Border(1, p.hairline)
 					}
 					a.artistLinks(c, tr, p.muted, p.text).FontSize(12.5).SingleLine().Shrink(1).MinWidth(0)
 					if tr.Reason != "" {
@@ -418,14 +445,14 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 			}
 			// A liked song's heart shows; the others' as the pointer is on them.
 			ui.Box(c).Size(32, 32).Center().Children(func() {
-				if a.liked[tr.ID] || hovered {
+				if a.isLiked(tr) || hovered {
 					a.likeButton(c.Key("like"), tr, 15, p.muted)
 				}
 			})
 			ui.Text(c, clock(tr.Length())).FontSize(12.5).FontFeatures("tnum").TextColor(p.faint).Width(44).TextAlign(ui.End)
 		})
 		if row.Clicked() && tr.Playable() {
-			a.pl.PlayQueue(tracks, i)
+			play(i)
 		}
 	}).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).ScrollbarInsets(top, 0, bottom, 0)
 }

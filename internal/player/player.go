@@ -631,6 +631,8 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			if err != nil {
 				p.err = err.Error()
 				switch {
+				case err == netease.ErrGraySongUnavailable:
+					p.err = "没有找到可用的替代音源"
 				case err != netease.ErrUnavailable:
 				case t.ProgramID != 0:
 					p.err = "这期节目需要购买才能收听"

@@ -28,6 +28,9 @@ type settings struct {
 	Quality string `json:"quality"`
 	// Appearance is light, dark, or system to follow the system.
 	Appearance string `json:"appearance"`
+	// GraySongFallback enables alternate audio sources when NetEase cannot
+	// stream a track.
+	GraySongFallback bool `json:"graySongFallback,omitempty"`
 	// Smoke makes the progress bars comets trailing smoke as music plays,
 	// for a few percent of a core: the listener turns it on.
 	Smoke bool `json:"smoke"`

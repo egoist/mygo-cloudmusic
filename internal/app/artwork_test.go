@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -86,5 +87,42 @@ func TestArtCacheFetchesCoversTogether(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%d of %d covers fetching at once", i, n)
 		}
+	}
+}
+
+// A cover that failed to load loads again after a while, as it shows. It
+// didn't: one timeout marked it failed for as long as it showed, and its
+// placeholder stayed.
+func TestArtCacheRetriesFailedCover(t *testing.T) {
+	cover, err := os.ReadFile("testdata/animated.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fetches atomic.Int32
+	offline := true
+	defer func(f func(string) ([]byte, error)) { fetchCover = f }(fetchCover)
+	fetchCover = func(string) ([]byte, error) {
+		fetches.Add(1)
+		if offline {
+			return nil, errors.New("timeout")
+		}
+		return cover, nil
+	}
+	now := time.Unix(1e9, 0)
+	posted := make(chan func(), 8)
+	c := newArtCache(func(f func()) { posted <- f })
+	c.now = func() time.Time { return now }
+	c.get("a", false)
+	(<-posted)()
+	now = now.Add(time.Second)
+	if a := c.get("a", false); a == nil || !a.failed || fetches.Load() != 1 {
+		t.Fatalf("asked again at once: %+v, %d fetches", a, fetches.Load())
+	}
+	offline = false
+	now = now.Add(artRetry(1))
+	c.get("a", false)
+	(<-posted)()
+	if a := c.get("a", false); a == nil || a.failed || fetches.Load() != 2 {
+		t.Errorf("not loaded again: %+v, %d fetches", a, fetches.Load())
 	}
 }

@@ -185,6 +185,9 @@ func (a *app) showMain() {
 
 // Run runs the app until it quits.
 func Run() error {
+	if !mygo.App.RequestSingleInstanceLock() {
+		return nil
+	}
 	a := &app{
 		playlists:  map[int64]*netease.Playlist{},
 		loadingPl:  map[int64]bool{},
@@ -235,6 +238,7 @@ func Run() error {
 			BackgroundColor:      "light-dark(#ffffff, #141416)",
 			Content:              ui.View(a.view),
 		})
+		mygo.App.OnSecondInstance(func([]string, string) { a.showMain() })
 		a.setMenu()
 		a.boot()
 		// The notch player is macOS's, over its menu bar: elsewhere it would

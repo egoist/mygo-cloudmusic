@@ -26,7 +26,7 @@ func newSongCache(mb int) *player.Cache {
 func (a *app) applyCacheLimit() {
 	songs, art := a.pl.Cache, a.art
 	limit := int64(a.settings.CacheMB) << 20
-	art.off = limit == 0
+	art.off.Store(limit == 0)
 	go func() {
 		if songs != nil {
 			songs.SetLimit(limit)

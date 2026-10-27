@@ -31,7 +31,7 @@ func artDir() string {
 
 // artPath returns the file of the cover at url, or "" when none are kept.
 func (c *artCache) artPath(url string) string {
-	if c.dir == "" || c.off {
+	if c.dir == "" || c.off.Load() {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(url))

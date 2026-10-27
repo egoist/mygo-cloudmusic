@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"os"
@@ -214,6 +215,51 @@ func TestArtCacheKeepsCoversOnDisk(t *testing.T) {
 	fetchCover = func(string) ([]byte, error) { return nil, errors.New("offline") }
 	if a := load(newArtCache(nil, dir), "cover"); a == nil || a.failed() {
 		t.Error("cover kept last time didn't show offline")
+	}
+}
+
+// The cover a song starts with, asked for by the page and the player at
+// once, is fetched once, and the player's shows offline from disk. The
+// player fetched its own, twice the download and none without the
+// network.
+func TestArtCacheSharesCoverWithPlayer(t *testing.T) {
+	cover, err := os.ReadFile("testdata/animated.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fetches atomic.Int32
+	started, release := make(chan struct{}, 2), make(chan struct{})
+	defer func(f func(string) ([]byte, error)) { fetchCover = f }(fetchCover)
+	fetchCover = func(string) ([]byte, error) {
+		fetches.Add(1)
+		started <- struct{}{}
+		<-release
+		return cover, nil
+	}
+	posted := make(chan func(), 8)
+	dir := t.TempDir()
+	c := newArtCache(func(f func()) { posted <- f }, dir)
+	c.get("cover", true)
+	<-started
+	got := make(chan []byte)
+	go func() {
+		b, _ := c.cover("cover")
+		got <- b
+	}()
+	// The player's can't be seen waiting; it is let go once it waits, or
+	// fetched its own.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	if b := <-got; !bytes.Equal(b, cover) {
+		t.Error("player got a cover other than the page's")
+	}
+	(<-posted)()
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("fetched %d times, want once", n)
+	}
+	fetchCover = func(string) ([]byte, error) { return nil, errors.New("offline") }
+	if b, err := newArtCache(nil, dir).cover("cover"); err != nil || !bytes.Equal(b, cover) {
+		t.Error("cover kept last time didn't show the player offline")
 	}
 }
 

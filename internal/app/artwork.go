@@ -46,15 +46,17 @@ func (a *artwork) due(now time.Time) bool {
 // for a while after: their pixels on the GPU, and on the CPU only their
 // data, which takes a fraction of the pixels. Those it loads it keeps on
 // disk too, in dir, unless it is "" or off. Its methods run on the main
-// thread, but for load, keep and clear, which run on goroutines; post runs
-// a function on the main thread.
+// thread, but for cover, fetch, load, keep and clear, which run on
+// goroutines; post runs a function on the main thread.
 type artCache struct {
 	art      map[string]*artwork
 	busy     map[string]bool
 	dir      string
-	off      bool         // keeps none on disk, as the songs kept are off
+	off      atomic.Bool  // keeps none on disk, as the songs kept are off
 	disk     sync.Mutex   // held as a cover is kept on disk, and as they all go
 	cleared  atomic.Int64 // how many times they all went; it changes under disk
+	flying   sync.Mutex
+	flights  map[string]*flight // the covers fetching, by URL
 	fetching chan struct{}
 	decoding chan struct{}
 	post     func(func())
@@ -78,7 +80,7 @@ const (
 )
 
 func newArtCache(post func(func()), dir string) *artCache {
-	c := &artCache{art: map[string]*artwork{}, busy: map[string]bool{}, dir: dir, fetching: make(chan struct{}, artFetches), decoding: make(chan struct{}, artDecodes), post: post, now: time.Now, swept: time.Now()}
+	c := &artCache{art: map[string]*artwork{}, busy: map[string]bool{}, dir: dir, flights: map[string]*flight{}, fetching: make(chan struct{}, artFetches), decoding: make(chan struct{}, artDecodes), post: post, now: time.Now, swept: time.Now()}
 	c.wake = func(d time.Duration) { time.AfterFunc(d, func() { c.post(func() {}) }) }
 	return c
 }
@@ -184,28 +186,80 @@ const artRelease = 2 * time.Second
 // fetchCover fetches a cover from the CDN; tests replace it.
 var fetchCover = netease.Fetch
 
-// load reads the cover at url from disk, at path, or fetches it and keeps
-// it there, unless the covers kept all went since gen, as a bitmap to draw
-// and an image to measure.
+// load returns the cover at url, through fetch, as a bitmap to draw and an
+// image to measure.
 func (c *artCache) load(url, path string, gen int64) (*ui.Bitmap, image.Image, error) {
+	b, err := c.fetch(url, path, gen)
+	if err != nil {
+		return nil, nil, err
+	}
+	bmp, img, err := c.decode(b)
+	// Kept as its header read, one that doesn't decode wouldn't again.
+	if err != nil && path != "" {
+		os.Remove(path)
+	}
+	return bmp, img, err
+}
+
+// cover returns the cover at url as the CDN sent it, for the player to
+// show the system: from disk when it is kept, or fetched and kept.
+func (c *artCache) cover(url string) ([]byte, error) {
+	return c.fetch(url, c.artPath(url), c.cleared.Load())
+}
+
+// flight is a cover fetching, which those that ask for it meanwhile wait
+// for: a page and the player ask for the one a song starts with at once.
+type flight struct {
+	done chan struct{}
+	b    []byte
+	err  error
+}
+
+// fetch reads the cover at url from disk, at path, or fetches it and keeps
+// it there, unless the covers kept all went since gen.
+func (c *artCache) fetch(url, path string, gen int64) ([]byte, error) {
+	c.flying.Lock()
+	if f := c.flights[url]; f != nil {
+		c.flying.Unlock()
+		<-f.done
+		return f.b, f.err
+	}
+	f := &flight{done: make(chan struct{})}
+	c.flights[url] = f
+	c.flying.Unlock()
+	defer func() {
+		c.flying.Lock()
+		delete(c.flights, url)
+		c.flying.Unlock()
+		close(f.done)
+	}()
 	if b, ok := readArt(path); ok {
-		if bmp, img, err := c.decode(b); err == nil {
-			return bmp, img, nil
+		if checkCover(b) == nil {
+			f.b = b
+			return b, nil
 		}
 		os.Remove(path)
 	}
 	c.fetching <- struct{}{}
 	b, err := fetchCover(url)
 	<-c.fetching
-	if err != nil {
-		return nil, nil, err
+	// Kept only once its header reads: not a page of an error, sent as
+	// 200.
+	if err == nil {
+		err = checkCover(b)
 	}
-	bmp, img, err := c.decode(b)
-	// Kept only once it decodes: not a page of an error, sent as 200.
 	if err == nil {
 		c.keep(path, b, gen)
 	}
-	return bmp, img, err
+	f.b, f.err = b, err
+	return b, err
+}
+
+// checkCover reports whether b is a picture the decoders read, by its
+// header alone.
+func checkCover(b []byte) error {
+	_, _, err := image.DecodeConfig(bytes.NewReader(stillCover(b)))
+	return err
 }
 
 func (c *artCache) decode(b []byte) (*ui.Bitmap, image.Image, error) {

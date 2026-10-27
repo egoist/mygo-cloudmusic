@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -39,6 +40,7 @@ type Player struct {
 	queue   []netease.Track
 	order   []int // the queue's indices in play order: shuffled or not
 	at      int   // where in order the current track is, -1 for none
+	queued  int   // manually queued tracks immediately after the current track
 	shuffle bool
 	repeat  RepeatMode
 	volume  float64
@@ -156,6 +158,7 @@ func (p *Player) PlayQueue(tracks []netease.Track, start int) {
 		return
 	}
 	p.endRadio()
+	p.queued = 0
 	start = min(max(start, 0), len(tracks)-1)
 	p.queue = append([]netease.Track(nil), tracks...)
 	p.order = make([]int, len(p.queue))
@@ -168,6 +171,51 @@ func (p *Player) PlayQueue(tracks []netease.Track, start int) {
 		return
 	}
 	p.load(start)
+}
+
+// InsertNext puts track after the current track without interrupting it,
+// moving an upcoming occurrence there instead of queuing it twice.
+func (p *Player) InsertNext(track netease.Track) {
+	p.queueTrack(track, true)
+}
+
+// AddToQueue puts track after the manually queued tracks, ahead of the
+// remaining playlist, without interrupting the current track.
+func (p *Player) AddToQueue(track netease.Track) {
+	p.queueTrack(track, false)
+}
+
+func (p *Player) queueTrack(track netease.Track, first bool) {
+	if len(p.order) == 0 {
+		p.PlayQueue([]netease.Track{track}, 0)
+		return
+	}
+	next := p.at + 1
+	i := len(p.queue)
+	for at := next; at < len(p.order); at++ {
+		if p.queue[p.order[at]].ID == track.ID {
+			i = p.order[at]
+			p.order = slices.Delete(p.order, at, at+1)
+			if at < next+p.queued {
+				p.queued--
+			}
+			break
+		}
+	}
+	if i == len(p.queue) {
+		p.queue = append(p.queue, track)
+	}
+	at := next
+	if !first {
+		at += p.queued
+	}
+	p.order = slices.Insert(p.order, at, i)
+	p.queued++
+	if p.awaiting {
+		p.load(next)
+		return
+	}
+	p.sync()
 }
 
 // PlayRadio plays tracks in their order, then goes on with those feed
@@ -192,6 +240,7 @@ func (p *Player) RadioFrom(name string, tracks []netease.Track, feed func(got fu
 		return
 	}
 	p.queue, p.order, p.at = []netease.Track{*p.track}, []int{0}, 0
+	p.queued = 0
 	p.appendTracks(tracks)
 	p.AttachRadio(name, feed)
 }
@@ -212,6 +261,7 @@ func (p *Player) EndRadio() {
 	}
 	awaiting := p.awaiting
 	p.endRadio()
+	p.queued = 0
 	if p.at >= 0 && p.at+1 < len(p.order) {
 		kept := make([]netease.Track, p.at+1)
 		for i, k := range p.order[:p.at+1] {
@@ -301,6 +351,8 @@ func (p *Player) ToggleShuffle() {
 		return
 	}
 	cur := p.order[max(p.at, 0)]
+	next := p.at + 1
+	queued := slices.Clone(p.order[next : next+p.queued])
 	if p.shuffle {
 		p.shuffleOrder(cur)
 		p.at = 0
@@ -309,6 +361,12 @@ func (p *Player) ToggleShuffle() {
 			p.order[i] = i
 		}
 		p.at = cur
+	}
+	if len(queued) > 0 {
+		// Manual requests keep their order ahead of the shuffled playlist.
+		p.order = slices.DeleteFunc(p.order, func(i int) bool { return slices.Contains(queued, i) })
+		p.at = slices.Index(p.order, cur)
+		p.order = slices.Insert(p.order, p.at+1, queued...)
 	}
 }
 
@@ -580,6 +638,15 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.stop()
 	p.gen++
 	gen := p.gen
+	if at < p.at && p.queued > 0 {
+		// Going back keeps outstanding requests next to the new current track.
+		next := p.at + 1
+		queued := slices.Clone(p.order[next : next+p.queued])
+		p.order = slices.Delete(p.order, next, next+p.queued)
+		p.order = slices.Insert(p.order, at+1, queued...)
+	} else if at > p.at {
+		p.queued = max(0, p.queued-(at-p.at))
+	}
 	p.at = at
 	t := p.queue[p.order[at]]
 	p.track = &t
@@ -705,6 +772,7 @@ type Session struct {
 	Queue    []netease.Track `json:"queue"`
 	Order    []int           `json:"order"`
 	At       int             `json:"at"`
+	Queued   int             `json:"queued,omitempty"` // manual requests immediately after At
 	Shuffle  bool            `json:"shuffle"`
 	Repeat   RepeatMode      `json:"repeat"`
 	Position int64           `json:"position"` // milliseconds
@@ -720,6 +788,7 @@ func (p *Player) Session() (Session, bool) {
 		Queue:    p.queue,
 		Order:    p.order,
 		At:       p.at,
+		Queued:   p.queued,
 		Shuffle:  p.shuffle,
 		Repeat:   p.repeat,
 		Position: p.Position().Milliseconds(),
@@ -741,7 +810,8 @@ func (p *Player) Restore(s Session) {
 		}
 		seen[i] = true
 	}
-	p.queue, p.order = s.Queue, s.Order
+	p.queue, p.order, p.at = s.Queue, s.Order, s.At
+	p.queued = min(max(s.Queued, 0), n-s.At-1)
 	p.shuffle, p.repeat = s.Shuffle, s.Repeat%3
 	p.loadSkipping(s.At, 0, false, time.Duration(s.Position)*time.Millisecond)
 }

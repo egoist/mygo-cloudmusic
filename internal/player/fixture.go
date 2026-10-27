@@ -20,6 +20,7 @@ func (p *Player) Cue(tracks []netease.Track) {
 		p.order[i] = i
 	}
 	p.at = 0
+	p.queued = 0
 	p.track = &p.queue[0]
 }
 

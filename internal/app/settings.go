@@ -8,6 +8,23 @@ import (
 	"github.com/egoist/mygo"
 )
 
+// desktopLyricsSettings are the desktop lyric window's persistent choices.
+// A pointer in settings keeps older settings files compatible: missing
+// desktop-lyrics data gets the current defaults on first use.
+type desktopLyricsSettings struct {
+	Locked          bool    `json:"locked,omitempty"`
+	ShowTranslation bool    `json:"showTranslation"`
+	FontSize        float32 `json:"fontSize,omitempty"`
+	Color           int     `json:"color,omitempty"`
+	X               int     `json:"x,omitempty"`
+	Y               int     `json:"y,omitempty"`
+	PositionSet     bool    `json:"positionSet,omitempty"`
+}
+
+func defaultDesktopLyricsSettings() desktopLyricsSettings {
+	return desktopLyricsSettings{ShowTranslation: true, FontSize: 30}
+}
+
 // settings are the listener's choices, kept in settings.json in the user
 // data directory.
 type settings struct {
@@ -58,6 +75,11 @@ type settings struct {
 	// Captions writes down episodes as they play, for their captions,
 	// once the listener has downloaded the model.
 	Captions bool `json:"captions"`
+	// DesktopLyricsLocked remembers whether desktop lyrics should start
+	// click-through when shown.
+	DesktopLyricsLocked bool `json:"desktopLyricsLocked,omitempty"`
+	// DesktopLyrics keeps the desktop lyric window's style and position.
+	DesktopLyrics *desktopLyricsSettings `json:"desktopLyrics,omitempty"`
 	// CacheMB is how many megabytes the songs kept on disk may take; 0
 	// keeps none.
 	CacheMB int `json:"cacheMB"`

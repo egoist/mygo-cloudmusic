@@ -125,12 +125,6 @@ func (a *app) settingsView(c *ui.Context) {
 		}
 
 		group("播放", func() {
-			row("灰度歌曲音源", "开启后会将歌曲 ID、名称和歌手发给 GD Studio、酷狗和酷我匹配替代音源", func() {
-				if ui.Switch(c.Key("gray-song-fallback"), &s.GraySongFallback).Label("灰度歌曲音源").Changed() {
-					netease.SetGraySongFallback(s.GraySongFallback)
-					a.changed()
-				}
-			})
 			row("音质", "无损与 Hi-Res 需要黑胶 VIP，没有时播放所能播放的最高音质；下一首歌曲开始生效", func() {
 				labels := make([]string, len(qualityLevels))
 				chosen := qualityLevels[2].label
@@ -157,6 +151,12 @@ func (a *app) settingsView(c *ui.Context) {
 			row("音量均衡", "按网易云音乐测得的响度调整每首歌的音量，让歌曲听起来一样响", func() {
 				if ui.Switch(c.Key("normalize"), &s.Normalize).Label("音量均衡").Changed() {
 					a.pl.SetVolume(a.volume)
+					a.changed()
+				}
+			})
+			row("灰度歌曲音源", "开启后会将歌曲 ID、名称和歌手发给 GD Studio、酷狗和酷我匹配替代音源", func() {
+				if ui.Switch(c.Key("gray-song-fallback"), &s.GraySongFallback).Label("灰度歌曲音源").Changed() {
+					netease.SetGraySongFallback(s.GraySongFallback)
 					a.changed()
 				}
 			})

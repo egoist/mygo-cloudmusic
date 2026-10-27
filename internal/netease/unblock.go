@@ -288,15 +288,12 @@ func chooseAlternate[T any](items []T, duration int64, length func(T) int64) (T,
 	if len(items) == 0 {
 		return zero, false
 	}
-	if duration <= 0 {
-		return items[0], true
-	}
 	for _, item := range items[:min(len(items), 5)] {
 		if d := length(item); d > 0 && absMillis(d-duration) < 5_000 {
 			return item, true
 		}
 	}
-	return zero, false
+	return items[0], true
 }
 
 func absMillis(n int64) int64 {

@@ -1,11 +1,14 @@
 package netease
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/image/webp"
 )
 
 func TestQRLoginLive(t *testing.T) {
@@ -276,5 +279,28 @@ func TestProgramCommentsLive(t *testing.T) {
 	}
 	if _, ok := liked[ids[1]]; !ok {
 		t.Errorf("no answer of %d: %v", ids[1], liked)
+	}
+}
+
+// Sized gets a cover as a square WebP, whatever it was uploaded as and
+// whatever its shape: with param, a cover uploaded as PNG came as PNG,
+// over 100 KB at 240 pixels, and covers far from the CDN didn't load.
+func TestSizedWebPLive(t *testing.T) {
+	if os.Getenv("LIVE") == "" {
+		t.Skip()
+	}
+	for _, pic := range []string{
+		"http://p1.music.126.net/Pzxy6py26NgNmhJjYMf2RQ==/109951169724216323.jpg", // a PNG
+		"http://p1.music.126.net/cwi82gitJJ0DfMO4cXbP8A==/109951166515550955.jpg", // 937×832
+	} {
+		b, err := Fetch(Sized(pic, 240))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := webp.DecodeConfig(bytes.NewReader(b))
+		if err != nil || cfg.Width != 240 || cfg.Height != 240 {
+			t.Errorf("%s: %d×%d, %v", pic, cfg.Width, cfg.Height, err)
+		}
+		t.Logf("%s: %d bytes", pic, len(b))
 	}
 }

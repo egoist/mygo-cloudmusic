@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -32,7 +33,7 @@ func TestAnimatedWebPCover(t *testing.T) {
 // keep every cover it showed; the ones still showing stay.
 func TestArtCacheDropsUnusedCovers(t *testing.T) {
 	now := time.Unix(1e9, 0)
-	c := newArtCache(func(func()) {})
+	c := newArtCache(func(func()) {}, "")
 	c.now, c.swept = func() time.Time { return now }, now
 	c.art["shown"] = &artwork{used: now}
 	c.art["gone"] = &artwork{used: now}
@@ -54,7 +55,7 @@ func TestArtCacheDropsUnusedCovers(t *testing.T) {
 // dropped every cover on the page, which flashed as they loaded again.
 func TestArtCacheKeepsCoversWhileIdle(t *testing.T) {
 	now := time.Unix(1e9, 0)
-	c := newArtCache(func(func()) {})
+	c := newArtCache(func(func()) {}, "")
 	c.now, c.swept = func() time.Time { return now }, now
 	c.art["shown"] = &artwork{used: now}
 	c.get("shown", false)
@@ -77,7 +78,7 @@ func TestArtCacheFetchesCoversTogether(t *testing.T) {
 		return nil, errors.New("offline")
 	}
 	defer close(release)
-	c := newArtCache(func(func()) {})
+	c := newArtCache(func(func()) {}, "")
 	for i := range n {
 		c.get(strconv.Itoa(i), false)
 	}
@@ -110,7 +111,7 @@ func TestArtCacheRetriesFailedCover(t *testing.T) {
 	}
 	now := time.Unix(1e9, 0)
 	posted := make(chan func(), 8)
-	c := newArtCache(func(f func()) { posted <- f })
+	c := newArtCache(func(f func()) { posted <- f }, "")
 	c.now = func() time.Time { return now }
 	c.get("a", false)
 	(<-posted)()
@@ -124,5 +125,59 @@ func TestArtCacheRetriesFailedCover(t *testing.T) {
 	(<-posted)()
 	if a := c.get("a", false); a == nil || a.failed || fetches.Load() != 2 {
 		t.Errorf("not loaded again: %+v, %d fetches", a, fetches.Load())
+	}
+}
+
+// A cover loaded once shows from disk the next time the app opens, without
+// the network; what came back but isn't a cover is not kept.
+func TestArtCacheKeepsCoversOnDisk(t *testing.T) {
+	cover, err := os.ReadFile("testdata/animated.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func(f func(string) ([]byte, error)) { fetchCover = f }(fetchCover)
+	fetchCover = func(url string) ([]byte, error) {
+		if url == "error" {
+			return []byte("<html>"), nil
+		}
+		return cover, nil
+	}
+	dir := t.TempDir()
+	load := func(c *artCache, url string) *artwork {
+		posted := make(chan func(), 8)
+		c.post = func(f func()) { posted <- f }
+		c.get(url, false)
+		(<-posted)()
+		return c.get(url, false)
+	}
+	first := newArtCache(nil, dir)
+	load(first, "cover")
+	load(first, "error")
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("kept %d files, want the cover alone", len(entries))
+	}
+	fetchCover = func(string) ([]byte, error) { return nil, errors.New("offline") }
+	if a := load(newArtCache(nil, dir), "cover"); a == nil || a.failed {
+		t.Error("cover kept last time didn't show offline")
+	}
+}
+
+// Past the limit, the covers on disk shown longest ago go first.
+func TestPruneArt(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	for i, name := range []string{"oldest", "older", "newest"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, make([]byte, 100), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		at := now.Add(time.Duration(i-3) * time.Hour)
+		os.Chtimes(path, at, at)
+	}
+	pruneArt(dir, 200)
+	for name, want := range map[string]bool{"oldest": false, "older": true, "newest": true} {
+		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
+			t.Errorf("%s kept %v, want %v", name, err == nil, want)
+		}
 	}
 }

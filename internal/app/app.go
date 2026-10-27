@@ -207,7 +207,8 @@ func Run() error {
 		a.npPane = a.lyricsPaneChosen()
 		// Before the window: on Windows it lays out its content as it is
 		// made, and the view asks the player what plays.
-		a.art = newArtCache(a.post)
+		a.art = newArtCache(a.post, artDir())
+		go pruneArt(a.art.dir, artDiskLimit)
 		a.pl = player.New(a.post)
 		a.pl.Quality = func() string { return a.settings.Quality }
 		a.pl.Normalize = func() bool { return a.settings.Normalize }

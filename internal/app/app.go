@@ -210,6 +210,7 @@ func Run() error {
 		// Before the window: on Windows it lays out its content as it is
 		// made, and the view asks the player what plays.
 		a.art = newArtCache(a.post, artDir())
+		a.art.off = a.settings.CacheMB == 0
 		go pruneArt(a.art.dir, artDiskLimit)
 		a.pl = player.New(a.post)
 		a.pl.Quality = func() string { return a.settings.Quality }

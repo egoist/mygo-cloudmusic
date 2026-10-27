@@ -3,12 +3,16 @@ package app
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"image"
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
+	"net/http"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -23,25 +27,38 @@ import (
 type artwork struct {
 	bmp      *ui.Bitmap
 	backdrop *ui.Bitmap
-	tint     ui.Color // the cover's most vivid color
-	failed   bool
+	tint     ui.Color  // the cover's most vivid color
 	fails    int       // how many times in a row it failed to load
-	retry    time.Time // when one that failed loads again
+	retry    time.Time // when one that failed loads again, zero for never
 	used     time.Time // when it was last asked for
+}
+
+// failed reports whether the cover failed to load, the last time it tried.
+func (a *artwork) failed() bool { return a.fails > 0 }
+
+// due reports whether the cover, failed, is to load again at now; one
+// that isn't there to load never is.
+func (a *artwork) due(now time.Time) bool {
+	return a.failed() && !a.retry.IsZero() && !now.Before(a.retry)
 }
 
 // artCache loads covers on goroutines and keeps them while they show, and
 // for a while after: their pixels on the GPU, and on the CPU only their
 // data, which takes a fraction of the pixels. Those it loads it keeps on
-// disk too, in dir, unless it is "". Its methods run on the main thread;
-// post runs a function there.
+// disk too, in dir, unless it is "" or off. Its methods run on the main
+// thread, but for load, keep and clear, which run on goroutines; post runs
+// a function on the main thread.
 type artCache struct {
 	art      map[string]*artwork
 	busy     map[string]bool
 	dir      string
+	off      bool         // keeps none on disk, as the songs kept are off
+	disk     sync.Mutex   // held as a cover is kept on disk, and as they all go
+	cleared  atomic.Int64 // how many times they all went; it changes under disk
 	fetching chan struct{}
 	decoding chan struct{}
 	post     func(func())
+	wake     func(time.Duration) // asks for a frame after a while
 	now      func() time.Time
 	swept    time.Time
 	asked    time.Time // when a cover was last asked for
@@ -61,7 +78,9 @@ const (
 )
 
 func newArtCache(post func(func()), dir string) *artCache {
-	return &artCache{art: map[string]*artwork{}, busy: map[string]bool{}, dir: dir, fetching: make(chan struct{}, artFetches), decoding: make(chan struct{}, artDecodes), post: post, now: time.Now, swept: time.Now()}
+	c := &artCache{art: map[string]*artwork{}, busy: map[string]bool{}, dir: dir, fetching: make(chan struct{}, artFetches), decoding: make(chan struct{}, artDecodes), post: post, now: time.Now, swept: time.Now()}
+	c.wake = func(d time.Duration) { time.AfterFunc(d, func() { c.post(func() {}) }) }
+	return c
 }
 
 // artRetry is how long a cover that failed to load n times in a row waits
@@ -69,6 +88,13 @@ func newArtCache(post func(func()), dir string) *artCache {
 // stays away, up to a minute.
 func artRetry(n int) time.Duration {
 	return min(5*time.Second<<min(n-1, 4), time.Minute)
+}
+
+// artGone reports whether err says the cover isn't there to load, now or
+// later: a 404 or a 403, any 4xx but a timeout or too many asked at once.
+func artGone(err error) bool {
+	var st netease.StatusError
+	return errors.As(err, &st) && st >= 400 && st < 500 && st != http.StatusRequestTimeout && st != http.StatusTooManyRequests
 }
 
 // sweep drops the covers not asked for in artKeep before the last one
@@ -87,7 +113,8 @@ func (c *artCache) sweep(now time.Time) {
 	}
 }
 
-// get returns the cover at url, or nil while it loads.
+// get returns the cover at url: nil while it first loads, and the one that
+// failed while it loads again.
 func (c *artCache) get(url string, backdrop bool) *artwork {
 	if url == "" {
 		return nil
@@ -105,12 +132,13 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 	}
 	// One that failed, to a timeout or the network gone, loads again once
 	// its wait is over, while it shows; until it comes, it stays failed.
-	if ok && (!a.failed || now.Before(a.retry)) || c.busy[key] {
+	if ok && !a.due(now) || c.busy[key] {
 		return a
 	}
 	c.busy[key] = true
+	path, gen := c.artPath(url), c.cleared.Load()
 	go func() {
-		bmp, img, err := c.load(url)
+		bmp, img, err := c.load(url, path, gen)
 		var blurred *image.RGBA
 		var tint ui.Color
 		if err == nil {
@@ -122,14 +150,18 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 		c.post(func() {
 			delete(c.busy, key)
 			if err != nil {
-				fails := 1
-				if old := c.art[key]; old != nil && old.failed {
-					fails = old.fails + 1
+				a := &artwork{fails: 1, used: c.now()}
+				if old := c.art[key]; old != nil {
+					a.fails += old.fails
 				}
-				wait := artRetry(fails)
-				c.art[key] = &artwork{failed: true, fails: fails, retry: c.now().Add(wait), used: c.now()}
-				// Drawn again then, a page asks for it again.
-				time.AfterFunc(wait, func() { c.post(func() {}) })
+				// One the CDN hasn't got stays failed, until it is swept.
+				if !artGone(err) {
+					wait := artRetry(a.fails)
+					a.retry = c.now().Add(wait)
+					// Drawn again then, a page asks for it again.
+					c.wake(wait)
+				}
+				c.art[key] = a
 				return
 			}
 			a := &artwork{bmp: bmp, tint: tint, used: c.now()}
@@ -152,10 +184,10 @@ const artRelease = 2 * time.Second
 // fetchCover fetches a cover from the CDN; tests replace it.
 var fetchCover = netease.Fetch
 
-// load reads the cover at url from disk, or fetches it and keeps it there,
-// as a bitmap to draw and an image to measure.
-func (c *artCache) load(url string) (*ui.Bitmap, image.Image, error) {
-	path := c.artPath(url)
+// load reads the cover at url from disk, at path, or fetches it and keeps
+// it there, unless the covers kept all went since gen, as a bitmap to draw
+// and an image to measure.
+func (c *artCache) load(url, path string, gen int64) (*ui.Bitmap, image.Image, error) {
 	if b, ok := readArt(path); ok {
 		if bmp, img, err := c.decode(b); err == nil {
 			return bmp, img, nil
@@ -171,7 +203,7 @@ func (c *artCache) load(url string) (*ui.Bitmap, image.Image, error) {
 	bmp, img, err := c.decode(b)
 	// Kept only once it decodes: not a page of an error, sent as 200.
 	if err == nil {
-		keepArt(path, b)
+		c.keep(path, b, gen)
 	}
 	return bmp, img, err
 }

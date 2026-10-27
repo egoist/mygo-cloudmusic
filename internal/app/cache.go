@@ -21,15 +21,21 @@ func newSongCache(mb int) *player.Cache {
 	return player.NewCache(filepath.Join(dir, "songs"), int64(mb)<<20)
 }
 
-// applyCacheLimit gives the cache the limit the settings say.
+// applyCacheLimit gives the cache the limit the settings say. With none,
+// the covers kept on disk go too, and no more are kept.
 func (a *app) applyCacheLimit() {
-	if cache := a.pl.Cache; cache != nil {
-		limit := int64(a.settings.CacheMB) << 20
-		go func() {
-			cache.SetLimit(limit)
-			a.measureCache()
-		}()
-	}
+	songs, art := a.pl.Cache, a.art
+	limit := int64(a.settings.CacheMB) << 20
+	art.off = limit == 0
+	go func() {
+		if songs != nil {
+			songs.SetLimit(limit)
+		}
+		if limit == 0 {
+			art.clear()
+		}
+		a.post(a.measureCache)
+	}()
 }
 
 // measureCache finds how much the songs kept take, and every cache with
@@ -82,18 +88,21 @@ func dirSize(dir string) int64 {
 }
 
 // clearCache drops every cache: the songs kept, the covers and the
-// transcripts.
+// transcripts. The episode playing, as the song, keeps its transcript
+// again as it goes on.
 func (a *app) clearCache() {
 	a.cacheUsed, a.cacheAll = 0, 0
-	songs, dirs := a.pl.Cache, a.cacheDirs()
+	songs, art := a.pl.Cache, a.art
+	transcripts, err := transcriptDir()
 	go func() {
 		if songs != nil {
 			songs.Clear()
 		}
-		for _, dir := range dirs {
-			os.RemoveAll(dir)
+		art.clear()
+		if err == nil {
+			os.RemoveAll(transcripts)
 		}
-		a.measureCache()
+		a.post(a.measureCache)
 	}()
 }
 

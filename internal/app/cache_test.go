@@ -51,3 +51,40 @@ func TestClearAllCaches(t *testing.T) {
 		}
 	}
 }
+
+// With 歌曲缓存 turned off, the covers kept on disk go, and those that load
+// after aren't kept: they were, up to 200 MB, whatever it said.
+func TestCacheOffKeepsNoCovers(t *testing.T) {
+	cover, err := os.ReadFile("testdata/animated.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func(f func(string) ([]byte, error)) { fetchCover = f }(fetchCover)
+	fetchCover = func(string) ([]byte, error) { return cover, nil }
+	a := newTestApp()
+	a.settings = defaultSettings()
+	posted := make(chan func(), 8)
+	a.art = newArtCache(func(f func()) { posted <- f }, t.TempDir())
+	kept := filepath.Join(a.art.dir, "0123456789abcdef")
+	if err := os.WriteFile(kept, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Not through the select: what it changes applies the appearance too,
+	// which waits for a main loop the test hasn't got.
+	a.settings.CacheMB = 0
+	a.applyCacheLimit()
+	// It clears on a goroutine.
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(a.art.dir); err != nil {
+			break
+		}
+	}
+	if _, err := os.Stat(kept); err == nil {
+		t.Error("cover kept before still there")
+	}
+	a.art.get("cover", false)
+	(<-posted)()
+	if _, err := os.Stat(a.art.dir); err == nil {
+		t.Error("cover loaded after kept on disk")
+	}
+}

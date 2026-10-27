@@ -31,7 +31,7 @@ func artDir() string {
 
 // artPath returns the file of the cover at url, or "" when none are kept.
 func (c *artCache) artPath(url string) string {
-	if c.dir == "" {
+	if c.dir == "" || c.off {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(url))
@@ -75,6 +75,30 @@ func keepArt(path string, b []byte) {
 	}
 }
 
+// keep keeps the cover b at path, unless the covers kept all went since
+// gen: loading as they went, it would bring their folder back.
+func (c *artCache) keep(path string, b []byte, gen int64) {
+	if path == "" {
+		return
+	}
+	c.disk.Lock()
+	defer c.disk.Unlock()
+	if c.cleared.Load() == gen {
+		keepArt(path, b)
+	}
+}
+
+// clear drops the covers kept on disk, and those loading as it does.
+func (c *artCache) clear() {
+	if c.dir == "" {
+		return
+	}
+	c.disk.Lock()
+	defer c.disk.Unlock()
+	c.cleared.Add(1)
+	os.RemoveAll(c.dir)
+}
+
 // pruneArt drops the covers in dir shown longest ago until the rest fit
 // limit, and the parts of those an app that quit left.
 func pruneArt(dir string, limit int64) {
@@ -105,6 +129,11 @@ func pruneArt(dir string, limit int64) {
 	for _, k := range covers {
 		if total <= limit {
 			return
+		}
+		// One shown since the covers were listed, as the app opens, isn't
+		// among those shown longest ago.
+		if info, err := os.Stat(k.path); err == nil && info.ModTime().After(k.used) {
+			continue
 		}
 		if os.Remove(k.path) == nil {
 			total -= k.size

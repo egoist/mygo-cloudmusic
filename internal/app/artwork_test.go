@@ -2,12 +2,15 @@ package app
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"netease-music-mygo/internal/netease"
 )
 
 // An animated WebP cover, as some playlists have, shows its first frame,
@@ -113,18 +116,70 @@ func TestArtCacheRetriesFailedCover(t *testing.T) {
 	posted := make(chan func(), 8)
 	c := newArtCache(func(f func()) { posted <- f }, "")
 	c.now = func() time.Time { return now }
+	// The wait passes on c.now alone: a frame asked for after it, on the
+	// wall clock, would come in posted in place of the cover.
+	c.wake = func(time.Duration) {}
 	c.get("a", false)
 	(<-posted)()
 	now = now.Add(time.Second)
-	if a := c.get("a", false); a == nil || !a.failed || fetches.Load() != 1 {
+	if a := c.get("a", false); a == nil || !a.failed() || fetches.Load() != 1 {
 		t.Fatalf("asked again at once: %+v, %d fetches", a, fetches.Load())
 	}
 	offline = false
 	now = now.Add(artRetry(1))
 	c.get("a", false)
 	(<-posted)()
-	if a := c.get("a", false); a == nil || a.failed || fetches.Load() != 2 {
+	if a := c.get("a", false); a == nil || a.failed() || fetches.Load() != 2 {
 		t.Errorf("not loaded again: %+v, %d fetches", a, fetches.Load())
+	}
+}
+
+// A cover the CDN hasn't got, answering 404, isn't asked for again as it
+// shows: it was, every minute, for as long as it showed.
+func TestArtCacheGivesUpOnMissingCover(t *testing.T) {
+	var fetches atomic.Int32
+	defer func(f func(string) ([]byte, error)) { fetchCover = f }(fetchCover)
+	fetchCover = func(string) ([]byte, error) {
+		fetches.Add(1)
+		return nil, netease.StatusError(http.StatusNotFound)
+	}
+	now := time.Unix(1e9, 0)
+	posted := make(chan func(), 8)
+	c := newArtCache(func(f func()) { posted <- f }, "")
+	c.now = func() time.Time { return now }
+	c.wake = func(time.Duration) { t.Error("asked for a frame to load it again") }
+	c.get("a", false)
+	(<-posted)()
+	now = now.Add(time.Minute)
+	if a := c.get("a", false); a == nil || !a.failed() || fetches.Load() != 1 {
+		t.Errorf("asked again: %+v, %d fetches", a, fetches.Load())
+	}
+}
+
+// A cover that loads as the covers kept on disk are cleared isn't kept: it
+// made their folder again, and the cache cleared came back.
+func TestArtCacheClearDropsLoadingCover(t *testing.T) {
+	cover, err := os.ReadFile("testdata/animated.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetched := make(chan struct{})
+	defer func(f func(string) ([]byte, error)) { fetchCover = f }(fetchCover)
+	fetchCover = func(string) ([]byte, error) {
+		<-fetched
+		return cover, nil
+	}
+	posted := make(chan func(), 8)
+	c := newArtCache(func(f func()) { posted <- f }, filepath.Join(t.TempDir(), "covers"))
+	c.get("a", false)
+	c.clear()
+	close(fetched)
+	(<-posted)()
+	if a := c.get("a", false); a == nil || a.failed() {
+		t.Fatal("cover didn't load")
+	}
+	if _, err := os.Stat(c.dir); err == nil {
+		t.Error("covers kept after they were cleared")
 	}
 }
 
@@ -157,7 +212,7 @@ func TestArtCacheKeepsCoversOnDisk(t *testing.T) {
 		t.Errorf("kept %d files, want the cover alone", len(entries))
 	}
 	fetchCover = func(string) ([]byte, error) { return nil, errors.New("offline") }
-	if a := load(newArtCache(nil, dir), "cover"); a == nil || a.failed {
+	if a := load(newArtCache(nil, dir), "cover"); a == nil || a.failed() {
 		t.Error("cover kept last time didn't show offline")
 	}
 }

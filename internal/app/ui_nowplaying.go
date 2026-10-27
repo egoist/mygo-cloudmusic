@@ -83,7 +83,7 @@ func (a *app) nowPlayingView(c *ui.Context) {
 	}
 	a.npArt = shown
 	tint := ui.RGB(120, 120, 130)
-	if shown != nil && !shown.failed {
+	if shown != nil && !shown.failed() {
 		tint = shown.tint
 	}
 	accent := tint.Mix(white, 0.45)

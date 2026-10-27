@@ -510,7 +510,15 @@ func Fetch(url string) ([]byte, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, errors.New(res.Status)
+		return nil, StatusError(res.StatusCode)
 	}
 	return io.ReadAll(res.Body)
+}
+
+// StatusError is the status of an answer other than 200 OK, as Fetch
+// returns it.
+type StatusError int
+
+func (e StatusError) Error() string {
+	return fmt.Sprintf("%d %s", int(e), http.StatusText(int(e)))
 }

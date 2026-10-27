@@ -412,7 +412,7 @@ func (n *notch) compact(c *ui.Context, tr *netease.Track, shown float32) {
 func (n *notch) levels(c *ui.Context, tr *netease.Track, w, h float32, count int) {
 	a := n.a
 	color := ui.RGB(255, 255, 255)
-	if art := a.art.get(netease.Sized(tr.Album.PicURL, 96), false); art != nil && !art.failed {
+	if art := a.art.get(netease.Sized(tr.Album.PicURL, 96), false); art != nil && !art.failed() {
 		color = art.tint.Mix(white, 0.35)
 	}
 	ui.Box(c).Size(w, h).Draw(func(p *ui.Painter, r ui.Rect) {

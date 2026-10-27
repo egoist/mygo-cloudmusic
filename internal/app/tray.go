@@ -113,8 +113,16 @@ func (a *app) trayMenu() *mygo.Menu {
 		}
 	}
 	name := mygo.App.Name()
+	lockLabel := "锁定桌面歌词"
+	if a.desktopLyricsLocked {
+		lockLabel = "解锁桌面歌词"
+	}
+	lockItem := &mygo.MenuItem{Label: lockLabel, Click: run(a.toggleDesktopLyricsLock)}
+	a.desktopLyricsLockItem = lockItem
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "打开" + name, Click: run(a.showMain)},
+		{Label: "桌面歌词", Click: run(a.toggleDesktopLyrics)},
+		lockItem,
 		mygo.Separator(),
 		{Label: "播放/暂停", Click: run(func() { a.pl.TogglePlay() })},
 		{Label: "下一首", Click: run(func() { a.pl.Next() })},

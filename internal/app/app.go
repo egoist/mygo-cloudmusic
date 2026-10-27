@@ -39,12 +39,24 @@ type route struct {
 // app is the state both windows show. Everything in it is read and changed
 // on the main thread: by the views, and by goroutines through post.
 type app struct {
-	win   *mygo.Window
-	notch *notch
-	tray  *mygo.Tray // the icon in the menu bar or notification area, while it shows
-	art   *artCache
-	pl    *player.Player
-	pal   palette
+	win *mygo.Window
+	// desktopLyricsWin is the independent desktop-lyrics window.
+	desktopLyricsWin                          *mygo.Window
+	desktopLyricsLocked, desktopLyricsToolbar bool
+	desktopLyricsShowTranslation              bool
+	desktopLyricsFontSize                     float32
+	desktopLyricsColor                        int
+	desktopLyricsPoll                         *time.Timer
+	desktopLyricsTrackID                      int64
+	desktopLyricsShownAt                      int
+	desktopLyricsPreviousAt                   int
+	desktopLyricsScrollGeneration             int
+	notch                                     *notch
+	tray                                      *mygo.Tray // the icon in the menu bar or notification area, while it shows
+	desktopLyricsLockItem                     *mygo.MenuItem
+	art                                       *artCache
+	pl                                        *player.Player
+	pal                                       palette
 
 	route   route
 	history []route
@@ -163,6 +175,9 @@ func (a *app) redraw() {
 	if a.win != nil {
 		a.win.Invalidate()
 	}
+	if a.desktopLyricsWin != nil {
+		a.desktopLyricsWin.Invalidate()
+	}
 	if a.notch != nil && a.notch.win != nil {
 		a.notch.win.Invalidate()
 	}
@@ -215,6 +230,7 @@ func Run() error {
 		a.pl.Changed = func() {
 			a.keepSession()
 			a.syncCaptions()
+			a.redraw()
 		}
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
@@ -235,6 +251,7 @@ func Run() error {
 			BackgroundColor:      "light-dark(#ffffff, #141416)",
 			Content:              ui.View(a.view),
 		})
+		a.newDesktopLyrics()
 		a.setMenu()
 		a.boot()
 		// The notch player is macOS's, over its menu bar: elsewhere it would
@@ -270,6 +287,10 @@ func Run() error {
 	})
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		a.quitting = true
+		a.saveDesktopLyricsState()
+		if a.desktopLyricsWin != nil {
+			a.desktopLyricsWin.Close()
+		}
 		a.settings.Volume = a.volume
 		a.settings.save()
 		a.saveSession()

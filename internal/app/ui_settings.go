@@ -159,7 +159,7 @@ func (a *app) settingsView(c *ui.Context) {
 		}
 
 		group("缓存", func() {
-			row("歌曲缓存", "听过的歌曲保存在本机，再次播放无需等待，也不耗流量；"+a.cacheUsage(), func() {
+			row("歌曲缓存", "听过的歌曲保存在本机，再次播放无需等待，也不耗流量；"+cacheUsage(a.cacheUsed), func() {
 				labels := make([]string, len(cacheLimits))
 				chosen := cacheLimits[2].label
 				for i, l := range cacheLimits {
@@ -178,8 +178,12 @@ func (a *app) settingsView(c *ui.Context) {
 					a.applyCacheLimit()
 				}
 			})
-			row("清除缓存", "删除保存在本机的全部歌曲", func() {
-				if ui.Button(c.Key("clear-cache"), "清除").Disabled(a.cacheUsed <= 0).Clicked() {
+			kept := "歌曲与封面"
+			if a.captionsShown() {
+				kept = "歌曲、封面与播客字幕"
+			}
+			row("清除所有缓存", "删除保存在本机的"+kept+"；"+cacheUsage(a.cacheAll), func() {
+				if ui.Button(c.Key("clear-cache"), "清除").Disabled(a.cacheAll <= 0).Clicked() {
 					a.clearCache()
 				}
 			})

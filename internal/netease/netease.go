@@ -482,17 +482,19 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 }
 
 // Sized asks the image CDN for a picture of n×n pixels, cropped to the
-// square, as WebP. Sized alone, a picture keeps the format it was
+// square, as JPEG. Sized alone, a picture keeps the format it was
 // uploaded in, and a cover uploaded as PNG is over 100 KB at 240 pixels,
-// where as WebP it is a few: a line far from the CDN takes that in a
-// round trip, and the PNG in many. Quality alone leaves a PNG as it is;
-// thumbnail's y crops as param does, where x fits the picture inside.
+// where as JPEG it is about 10: a line far from the CDN takes that in a
+// round trip, and the PNG in many. Not WebP, a quarter smaller still: the
+// system's Now Playing takes PNG or JPEG alone, and the player hands it
+// this cover. Quality alone leaves a PNG as it is; thumbnail's y crops as
+// param does, where x fits the picture inside.
 func Sized(pic string, n int) string {
 	if pic == "" {
 		return ""
 	}
 	pic = strings.Replace(pic, "http://", "https://", 1)
-	return fmt.Sprintf("%s?imageView=1&thumbnail=%dy%d&type=webp&quality=75", pic, n, n)
+	return fmt.Sprintf("%s?imageView=1&thumbnail=%dy%d&type=jpg&quality=75", pic, n, n)
 }
 
 // Fetch returns what is at url, as a cover the image CDN serves.

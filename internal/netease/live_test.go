@@ -3,12 +3,11 @@ package netease
 import (
 	"bytes"
 	"encoding/json"
+	"image/jpeg"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
-
-	"golang.org/x/image/webp"
 )
 
 func TestQRLoginLive(t *testing.T) {
@@ -282,10 +281,10 @@ func TestProgramCommentsLive(t *testing.T) {
 	}
 }
 
-// Sized gets a cover as a square WebP, whatever it was uploaded as and
+// Sized gets a cover as a square JPEG, whatever it was uploaded as and
 // whatever its shape: with param, a cover uploaded as PNG came as PNG,
 // over 100 KB at 240 pixels, and covers far from the CDN didn't load.
-func TestSizedWebPLive(t *testing.T) {
+func TestSizedJPEGLive(t *testing.T) {
 	if os.Getenv("LIVE") == "" {
 		t.Skip()
 	}
@@ -297,7 +296,7 @@ func TestSizedWebPLive(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := webp.DecodeConfig(bytes.NewReader(b))
+		cfg, err := jpeg.DecodeConfig(bytes.NewReader(b))
 		if err != nil || cfg.Width != 240 || cfg.Height != 240 {
 			t.Errorf("%s: %d×%d, %v", pic, cfg.Width, cfg.Height, err)
 		}

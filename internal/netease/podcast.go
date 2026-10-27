@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // Podcast is a channel of episodes, which NetEase calls a radio.
@@ -98,4 +99,45 @@ func HotPodcasts(limit, offset int) ([]Podcast, bool, error) {
 	q := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	err := get("/api/djradio/hot/v1", q, &res)
 	return res.Podcasts, res.HasMore, err
+}
+
+func programThread(id int64) string { return "A_DJ_1_" + strconv.FormatInt(id, 10) }
+
+// LikeProgram likes an episode for the listener, or unlikes it.
+func LikeProgram(id int64, like bool) error {
+	path := "/api/resource/unlike"
+	if like {
+		path = "/api/resource/like"
+	}
+	return eapiOK(path, map[string]any{"threadId": programThread(id)})
+}
+
+// ProgramsLiked returns which of the episodes ids the listener likes.
+// NetEase lists no episodes a listener likes, but answers of each whether
+// they do.
+func ProgramsLiked(ids []int64) (map[int64]bool, error) {
+	var res struct {
+		Code int `json:"code"`
+		Data []struct {
+			ID    int64 `json:"resourceId"`
+			Liked bool  `json:"liked"`
+		} `json:"data"`
+	}
+	list := make([]string, len(ids))
+	for i, id := range ids {
+		list[i] = strconv.FormatInt(id, 10)
+	}
+	// Resource type 1 is an episode, whose thread is A_DJ_1.
+	data := map[string]any{"resourceType": "1", "resourceIds": "[" + strings.Join(list, ",") + "]"}
+	if err := eapiPost("/api/resource/commentInfo/list", data, &res); err != nil {
+		return nil, err
+	}
+	if res.Code != 200 {
+		return nil, fmt.Errorf("netease: episodes liked: code %d", res.Code)
+	}
+	liked := make(map[int64]bool, len(res.Data))
+	for _, d := range res.Data {
+		liked[d.ID] = d.Liked
+	}
+	return liked, nil
 }

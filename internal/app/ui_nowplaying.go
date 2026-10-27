@@ -102,14 +102,11 @@ func (a *app) nowPlayingView(c *ui.Context) {
 
 func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, accent ui.Color, w, h float32, pointerIn bool) {
 	pl := a.pl
-	// An episode's comments aren't its audio's, which commentsFor loads.
-	if tr.ProgramID == 0 {
-		a.commentsFor(tr)
-	}
-	// An episode has what it is about in place of lyrics and comments; a
-	// song, lyrics in place of that.
+	a.commentsFor(tr)
+	// An episode has what it is about in place of lyrics; a song, lyrics in
+	// place of that.
 	switch program := tr.ProgramID != 0; {
-	case program && a.npPane != paneQueue:
+	case program && (a.npPane == paneLyrics || a.npPane == paneStage):
 		a.npPane = paneProgram
 	case !program && a.npPane == paneProgram:
 		a.npPane = a.lyricsPaneChosen()
@@ -241,6 +238,7 @@ func (a *app) paneTabs(c *ui.Context) {
 	if tr := a.pl.Current(); tr != nil && tr.ProgramID != 0 {
 		a.paneTab(c, paneProgram, "简介")
 		a.paneTab(c, paneQueue, "待播清单")
+		a.paneTab(c, paneComments, a.commentsTab())
 		return
 	}
 	a.paneTab(c, paneLyrics, "歌词")

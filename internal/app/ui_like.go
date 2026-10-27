@@ -9,10 +9,16 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
-// likes are the songs the listener likes, which hearts show filled.
+// likes are the songs and episodes the listener likes, which hearts show
+// filled.
 
-// likeSong likes or unlikes a song with NetEase; tests replace it.
-var likeSong = netease.Like
+// These like or unlike a song or an episode with NetEase, and ask which
+// episodes the listener likes; tests replace them.
+var (
+	likeSong      = netease.Like
+	likeProgram   = netease.LikeProgram
+	programsLiked = netease.ProgramsLiked
+)
 
 // loadLiked loads the listener's liked songs.
 func (a *app) loadLiked(uid int64) {
@@ -30,17 +36,17 @@ func (a *app) loadLiked(uid int64) {
 	}()
 }
 
-// toggleLike likes a song, or unlikes it, at once in the app and then with
-// NetEase, which may refuse: the heart goes back then. Signed out, it asks
-// the listener to sign in.
+// toggleLike likes a song or an episode, or unlikes it, at once in the app
+// and then with NetEase, which may refuse: the heart goes back then. Signed
+// out, it asks the listener to sign in.
 func (a *app) toggleLike(tr *netease.Track) {
-	// An episode's audio is no song to like.
-	if tr.ProgramID != 0 {
-		return
-	}
 	if a.profile == nil {
 		a.showMain()
 		a.openLogin()
+		return
+	}
+	if tr.ProgramID != 0 {
+		a.toggleProgramLike(tr.ProgramID)
 		return
 	}
 	if a.liked == nil {
@@ -69,21 +75,45 @@ func (a *app) toggleLike(tr *netease.Track) {
 	}()
 }
 
-// likeCurrent likes the song playing, or unlikes it, from the keyboard
-// (⌘D), which shows no heart: a toast says which it did.
+func (a *app) toggleProgramLike(id int64) {
+	like := !a.likedPrograms[id]
+	a.setProgramLiked(id, like)
+	go func() {
+		err := likeProgram(id, like)
+		a.post(func() {
+			if err != nil {
+				a.setProgramLiked(id, !like)
+				a.toast = "操作失败，请稍后再试"
+			}
+		})
+	}()
+}
+
+// isLiked reports whether the listener likes tr, a song or an episode.
+func (a *app) isLiked(tr *netease.Track) bool {
+	if tr.ProgramID != 0 {
+		return a.likedPrograms[tr.ProgramID]
+	}
+	return a.liked[tr.ID]
+}
+
+// likeCurrent likes the song or episode playing, or unlikes it, from the
+// keyboard (⌘D), which shows no heart: a toast says which it did.
 func (a *app) likeCurrent() {
 	tr := a.pl.Current()
 	if tr == nil {
 		return
 	}
 	a.toggleLike(tr)
-	if a.profile == nil {
+	switch {
+	case a.profile == nil:
 		return // asked to sign in
-	}
-	if a.liked[tr.ID] {
-		a.toast = "已添加到我喜欢的音乐"
-	} else {
+	case !a.isLiked(tr):
 		a.toast = "已取消喜欢"
+	case tr.ProgramID != 0:
+		a.toast = "已喜欢这期节目"
+	default:
+		a.toast = "已添加到我喜欢的音乐"
 	}
 }
 
@@ -95,14 +125,67 @@ func (a *app) setLiked(id int64, like bool) {
 	}
 }
 
+// setProgramLiked says the listener likes an episode, or doesn't, over
+// what NetEase may still answer of it.
+func (a *app) setProgramLiked(id int64, like bool) {
+	if a.likedPrograms == nil {
+		a.likedPrograms = map[int64]bool{}
+	}
+	a.likedPrograms[id] = like
+	delete(a.askedPrograms, id)
+}
+
+// askProgramLikes asks NetEase whether the listener likes the episodes
+// ids, those not asked about yet: NetEase lists no episodes they like.
+// An episode it doesn't answer of shows not liked, and isn't asked again.
+func (a *app) askProgramLikes(ids []int64) {
+	if a.profile == nil {
+		return
+	}
+	var ask []int64
+	for _, id := range ids {
+		if _, known := a.likedPrograms[id]; !known && !a.askedPrograms[id] {
+			ask = append(ask, id)
+		}
+	}
+	if len(ask) == 0 {
+		return
+	}
+	if a.askedPrograms == nil {
+		a.askedPrograms = map[int64]bool{}
+	}
+	for _, id := range ask {
+		a.askedPrograms[id] = true
+	}
+	uid := a.profile.UserID
+	go func() {
+		liked, _ := programsLiked(ask)
+		a.post(func() { a.programLikesAnswered(uid, ask, liked) })
+	}()
+}
+
+// programLikesAnswered takes NetEase's answer of whether uid likes the
+// episodes asked about.
+func (a *app) programLikesAnswered(uid int64, asked []int64, liked map[int64]bool) {
+	if a.profile == nil || a.profile.UserID != uid {
+		return
+	}
+	for _, id := range asked {
+		// A heart clicked meanwhile knows better.
+		if a.askedPrograms[id] {
+			a.setProgramLiked(id, liked[id])
+		}
+	}
+}
+
 // likeButton is a heart that likes tr: filled in red once liked. Liking
 // pops it in on a spring while a ring swells around it and confetti flies
 // out; unliking lets it give a little.
 func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color ui.Color) ui.Element {
 	if tr.ProgramID != 0 {
-		return ui.Box(c) // an episode has none
+		a.askProgramLikes([]int64{tr.ProgramID})
 	}
-	liked := a.liked[tr.ID]
+	liked := a.isLiked(tr)
 	icon, label := iconHeart, "喜欢"
 	if liked {
 		icon, color, label = iconHeartFill, a.pal.accent, "取消喜欢"

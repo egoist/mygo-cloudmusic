@@ -87,7 +87,7 @@ func HeartMode(song, start, pid int64) ([]Track, error) {
 	return tracks, nil
 }
 
-// Comment is what a listener wrote about a song.
+// Comment is what a listener wrote about a song or an episode.
 type Comment struct {
 	ID   int64 `json:"commentId"`
 	User struct {
@@ -98,6 +98,7 @@ type Comment struct {
 	Content    string `json:"content"`
 	Time       int64  `json:"time"` // Unix milliseconds
 	LikedCount int    `json:"likedCount"`
+	Liked      bool   `json:"liked"` // by the listener signed in
 	IPLocation struct {
 		Location string `json:"location"`
 	} `json:"ipLocation"`
@@ -110,7 +111,7 @@ type Comment struct {
 	} `json:"beReplied"`
 }
 
-// Comments are a page of a song's comments.
+// Comments are a page of a song's or an episode's comments.
 type Comments struct {
 	// Hot are the comments most liked, on the first page only.
 	Hot    []Comment `json:"hotComments"`
@@ -119,13 +120,23 @@ type Comments struct {
 	More   bool      `json:"more"`
 }
 
-// SongComments returns limit of a song's latest comments from offset, and
-// on the first page its hot comments.
-func SongComments(id int64, offset, limit int) (*Comments, error) {
+// ThreadComments returns limit of the latest comments of a thread, a
+// track's (see Track.Thread), from offset, and on the first page its hot
+// comments.
+func ThreadComments(thread string, offset, limit int) (*Comments, error) {
 	var res Comments
 	q := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
-	if err := get(fmt.Sprintf("/api/v1/resource/comments/R_SO_4_%d", id), q, &res); err != nil {
+	if err := get("/api/v1/resource/comments/"+thread, q, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
+}
+
+// LikeComment likes a comment of a thread for the listener, or unlikes it.
+func LikeComment(thread string, id int64, like bool) error {
+	path := "/api/v1/comment/unlike"
+	if like {
+		path = "/api/v1/comment/like"
+	}
+	return eapiOK(path, map[string]any{"threadId": thread, "commentId": strconv.FormatInt(id, 10)})
 }

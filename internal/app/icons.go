@@ -53,6 +53,10 @@ var (
 	iconMore    = fillIcon(`<circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/>`)
 )
 
+// iconThumbFill is iconThumb filled, its cuff and hand apart as the outline
+// draws them.
+var iconThumbFill = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M2.9 10.9h2.3v10.2H2.9z"/><path d="M9 10.4 12 2a3.13 3.13 0 0 1 3 3.88L14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H9z"/></svg>`))
+
 var (
 	iconReload   = strokeIcon(`<path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.3 5.7"/>`)
 	iconUpDown   = strokeIcon(`<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>`)

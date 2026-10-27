@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -49,6 +50,110 @@ func TestLikeFromPlayerBar(t *testing.T) {
 	}
 	if like := <-calls; like {
 		t.Error("asked NetEase to like again")
+	}
+}
+
+// The heart of an episode playing likes the episode, not its audio, once
+// NetEase was asked, once, whether the listener likes it already.
+func TestLikeEpisode(t *testing.T) {
+	asked := make(chan []int64, 4)
+	programsLiked = func(ids []int64) (map[int64]bool, error) { asked <- ids; return nil, nil }
+	type call struct {
+		id   int64
+		like bool
+	}
+	calls := make(chan call, 4)
+	likeProgram = func(id int64, like bool) error { calls <- call{id, like}; return nil }
+	likeSong = func(int64, bool) error { t.Error("liked the episode's audio as a song"); return nil }
+	defer func() {
+		programsLiked, likeProgram, likeSong = netease.ProgramsLiked, netease.LikeProgram, netease.Like
+	}()
+
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.profile = &netease.Profile{UserID: 1}
+	a.pl.Cue([]netease.Track{{ID: 13, Name: "第一期", ProgramID: 3, PodcastID: 5, Duration: 600000}})
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if ids := wait(t, asked, "whether the episode is liked"); !slices.Equal(ids, []int64{3}) {
+		t.Fatalf("asked of %v", ids)
+	}
+	if err := tt.Click("喜欢"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.likedPrograms[3] {
+		t.Fatal("the heart did not fill at once")
+	}
+	if c := wait(t, calls, "the like"); c != (call{3, true}) {
+		t.Errorf("asked NetEase for %+v", c)
+	}
+	tt.Frame()
+	if err := tt.Click("取消喜欢"); err != nil {
+		t.Fatal(err)
+	}
+	if c := wait(t, calls, "the unlike"); c != (call{3, false}) || a.likedPrograms[3] {
+		t.Errorf("asked NetEase for %+v, liked %v", c, a.likedPrograms[3])
+	}
+	if len(asked) > 0 {
+		t.Error("asked again whether the episode is liked")
+	}
+}
+
+// A heart clicked while NetEase still answers whether the listener likes
+// the episode keeps what the click made it; an answer for a listener
+// signed out since is dropped.
+func TestEpisodeLikeClickBeatsAnswer(t *testing.T) {
+	programsLiked = func([]int64) (map[int64]bool, error) { return nil, nil }
+	likeProgram = func(int64, bool) error { return nil }
+	defer func() { programsLiked, likeProgram = netease.ProgramsLiked, netease.LikeProgram }()
+	a := newTestApp()
+	a.profile = &netease.Profile{UserID: 1}
+	a.askProgramLikes([]int64{3, 4})
+	a.toggleLike(&netease.Track{ID: 13, ProgramID: 3})
+	a.programLikesAnswered(1, []int64{3, 4}, map[int64]bool{4: true})
+	if !a.likedPrograms[3] || !a.likedPrograms[4] {
+		t.Fatalf("liked %v", a.likedPrograms)
+	}
+	a.signedIn(nil)
+	a.profile = &netease.Profile{UserID: 2}
+	a.askProgramLikes([]int64{5})
+	a.programLikesAnswered(1, []int64{5}, map[int64]bool{5: true})
+	if a.likedPrograms[5] {
+		t.Error("took the last listener's answer")
+	}
+}
+
+// On a podcast's page, a liked episode's heart shows, and another's as the
+// pointer is on it, which likes that one.
+func TestLikeEpisodeRow(t *testing.T) {
+	programsLiked = func([]int64) (map[int64]bool, error) { return nil, nil }
+	liked := make(chan int64, 4)
+	likeProgram = func(id int64, like bool) error { liked <- id; return nil }
+	defer func() { programsLiked, likeProgram = netease.ProgramsLiked, netease.LikeProgram }()
+	a := catalogApp()
+	a.profile = &netease.Profile{UserID: 1}
+	a.setProgramLiked(40, true)
+	a.open(route{page: pagePodcast, id: 5})
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	if _, ok := tt.Find("取消喜欢"); !ok {
+		t.Fatal("the liked episode shows no heart")
+	}
+	if _, ok := tt.Find("喜欢"); ok {
+		t.Fatal("a heart shows with the pointer on no episode")
+	}
+	r, _ := tt.Find(a.podcasts[5].programs[2].Name)
+	tt.Move(r.X+r.W/2, r.Y+r.H/2)
+	tt.Frame()
+	if err := tt.Click("喜欢"); err != nil {
+		t.Fatal(err)
+	}
+	if id := wait(t, liked, "the like"); id != 42 || !a.likedPrograms[42] {
+		t.Errorf("liked %d", id)
+	}
+	if a.pl.Current() != nil {
+		t.Error("the heart played the episode")
 	}
 }
 
@@ -361,5 +466,13 @@ func TestLikeCurrent(t *testing.T) {
 	a.likeCurrent()
 	if a.liked[7] || a.toast != "已取消喜欢" {
 		t.Fatalf("unliked: liked %v, toast %q", a.liked[7], a.toast)
+	}
+	// An episode playing: the episode, not its audio.
+	likeProgram = func(int64, bool) error { return nil }
+	defer func() { likeProgram = netease.LikeProgram }()
+	a.pl.Cue([]netease.Track{{ID: 13, Name: "第一期", ProgramID: 3}})
+	a.likeCurrent()
+	if !a.likedPrograms[3] || a.liked[13] {
+		t.Fatalf("episode liked %v, its audio %v", a.likedPrograms[3], a.liked[13])
 	}
 }

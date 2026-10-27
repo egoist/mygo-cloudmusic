@@ -247,3 +247,34 @@ func TestPodcastListsLive(t *testing.T) {
 		t.Fatalf("next page %+v, %v", next, err)
 	}
 }
+
+// An episode has comments of its own, not its audio's, and NetEase answers
+// of each episode asked about whether the listener likes it.
+func TestProgramCommentsLive(t *testing.T) {
+	if os.Getenv("LIVE") == "" {
+		t.Skip()
+	}
+	deviceOnce.Do(func() { deviceID = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123" })
+	res, err := SearchPage("故事", SearchPodcasts, 1, 0)
+	if err != nil || len(res.Podcasts) == 0 {
+		t.Fatalf("podcasts %+v, %v", res, err)
+	}
+	pod := &res.Podcasts[0]
+	programs, _, err := PodcastPrograms(pod.ID, 2, 0)
+	if err != nil || len(programs) < 2 {
+		t.Fatalf("%d episodes, %v", len(programs), err)
+	}
+	tr := programs[0].Track(pod)
+	page, err := ThreadComments(tr.Thread(), 0, 5)
+	if err != nil || page.Total == 0 || len(page.Latest) == 0 {
+		t.Fatalf("comments %+v, %v", page, err)
+	}
+	ids := []int64{programs[0].ID, programs[1].ID}
+	liked, err := ProgramsLiked(ids)
+	if err != nil || len(liked) != 2 {
+		t.Fatalf("liked %v, %v", liked, err)
+	}
+	if _, ok := liked[ids[1]]; !ok {
+		t.Errorf("no answer of %d: %v", ids[1], liked)
+	}
+}

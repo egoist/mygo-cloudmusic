@@ -51,6 +51,7 @@ func (a *app) signedIn(prof *netease.Profile) {
 	// the listener play their songs is back.
 	a.restoreSession()
 	a.mine, a.saved, a.recPlaylists, a.liked = nil, nil, nil, nil
+	a.likedPrograms, a.askedPrograms = nil, nil
 	// What the listener may play, and follows, changed: load the pages
 	// again.
 	a.playlists = map[int64]*netease.Playlist{}

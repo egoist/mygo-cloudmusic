@@ -138,6 +138,23 @@ func eapiPost(path string, data map[string]any, out any) error {
 	return json.Unmarshal(body, out)
 }
 
+// eapiOK calls path through the eapi with data, and fails unless NetEase
+// answers code 200.
+func eapiOK(path string, data map[string]any) error {
+	var res apiError
+	if err := eapiPost(path, data, &res); err != nil {
+		return err
+	}
+	if res.Code != 200 {
+		msg := res.Message
+		if msg == "" {
+			msg = res.Msg
+		}
+		return fmt.Errorf("netease: %s: code %d %s", path, res.Code, msg)
+	}
+	return nil
+}
+
 // eapiEncrypt seals a request as the client does: the path, the JSON and
 // their digest, in AES-128-ECB, in hex.
 func eapiEncrypt(path string, data any) (string, error) {

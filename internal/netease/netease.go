@@ -106,6 +106,15 @@ func (t *Track) URL() string {
 	return apiBase + "/song?id=" + strconv.FormatInt(t.ID, 10)
 }
 
+// Thread names the track's comments, and what NetEase likes it by, for an
+// episode: the episode's, not its audio's.
+func (t *Track) Thread() string {
+	if t.ProgramID > 0 {
+		return programThread(t.ProgramID)
+	}
+	return "R_SO_4_" + strconv.FormatInt(t.ID, 10)
+}
+
 type Playlist struct {
 	ID          int64   `json:"id"`
 	Name        string  `json:"name"`

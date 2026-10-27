@@ -1,7 +1,9 @@
 package app
 
 import (
+	"errors"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -58,5 +60,31 @@ func TestArtCacheKeepsCoversWhileIdle(t *testing.T) {
 	now = now.Add(10 * time.Minute)
 	if c.get("shown", false) == nil {
 		t.Error("dropped the covers showing after 10 minutes idle")
+	}
+}
+
+// The covers a page shows fetch together, not 8 at a time as they decode:
+// far from the CDN each is a round trip most of a second long, and the
+// wall's 40 took 3 seconds in rounds of 8.
+func TestArtCacheFetchesCoversTogether(t *testing.T) {
+	const n = 20
+	started, release := make(chan struct{}, n), make(chan struct{})
+	defer func(f func(string) ([]byte, error)) { fetchCover = f }(fetchCover)
+	fetchCover = func(string) ([]byte, error) {
+		started <- struct{}{}
+		<-release
+		return nil, errors.New("offline")
+	}
+	defer close(release)
+	c := newArtCache(func(func()) {})
+	for i := range n {
+		c.get(strconv.Itoa(i), false)
+	}
+	for i := range n {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%d of %d covers fetching at once", i, n)
+		}
 	}
 }

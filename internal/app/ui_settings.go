@@ -6,6 +6,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"netease-music-mygo/internal/netease"
 )
 
 // openSettings shows the settings window, opening it the first time.
@@ -17,6 +19,8 @@ func (a *app) openSettings() {
 		return
 	}
 	a.measureCache()
+	a.proxyDraft = a.settings.Proxy
+	a.proxyErr = ""
 	a.settingsWin = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "设置",
 		Width:           560,
@@ -46,6 +50,20 @@ func (a *app) changed() {
 	if a.notch != nil {
 		a.notch.setEnabled(a.settings.Notch)
 	}
+	a.redraw()
+}
+
+func (a *app) applyProxy() {
+	proxy, err := netease.SetProxy(a.proxyDraft)
+	if err != nil {
+		a.proxyErr = "代理地址无效，支持 HTTP、HTTPS 或 SOCKS5"
+		a.redraw()
+		return
+	}
+	a.proxyDraft = proxy
+	a.settings.Proxy = proxy
+	a.proxyErr = ""
+	_ = a.settings.save()
 	a.redraw()
 }
 
@@ -121,6 +139,24 @@ func (a *app) settingsView(c *ui.Context) {
 				})
 			})
 		}
+
+		group("网络", func() {
+			desc := "仅网易云音乐的 API、封面和音频使用该代理，其他请求不受影响"
+			if a.proxyErr != "" {
+				desc = a.proxyErr
+			}
+			row("网易云代理", desc, func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					in := ui.TextInput(c.Key("proxy"), &a.proxyDraft).Placeholder("http://127.0.0.1:8080").Label("代理地址").Width(190)
+					if in.Submitted() {
+						a.applyProxy()
+					}
+					if ui.Button(c.Key("save-proxy"), "保存").Clicked() {
+						a.applyProxy()
+					}
+				})
+			})
+		})
 
 		group("播放", func() {
 			row("音质", "无损与 Hi-Res 需要黑胶 VIP，没有时播放所能播放的最高音质；下一首歌曲开始生效", func() {

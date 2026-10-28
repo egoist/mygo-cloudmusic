@@ -139,6 +139,8 @@ type app struct {
 
 	settings    settings
 	settingsWin *mygo.Window
+	proxyDraft  string
+	proxyErr    string
 	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
 	updates     bool  // the update plugin is used (useUpdater)
 
@@ -203,6 +205,9 @@ func Run() error {
 	a.useUpdater()
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
+		if proxy, err := netease.SetProxy(a.settings.Proxy); err == nil {
+			a.settings.Proxy = proxy
+		}
 		a.settings.applyAppearance()
 		a.npPane = a.lyricsPaneChosen()
 		// Before the window: on Windows it lays out its content as it is

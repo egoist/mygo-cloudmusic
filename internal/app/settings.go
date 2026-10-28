@@ -23,6 +23,8 @@ type settings struct {
 	// NotchGreeted says the notch showed itself, once, as the first song
 	// played (greet).
 	NotchGreeted bool `json:"notchGreeted"`
+	// Proxy is the URL of the proxy used only for NetEase requests.
+	Proxy string `json:"proxy,omitempty"`
 	// Quality is the level of the streams: standard, higher, exhigh,
 	// lossless or hires.
 	Quality string `json:"quality"`

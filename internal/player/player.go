@@ -32,6 +32,9 @@ type Player struct {
 	Normalize func() bool
 	// Cache keeps the songs played, if set.
 	Cache *Cache
+	// Cover, if set, returns the cover at url, to show the system: the
+	// app's, which keeps the covers it shows, so one isn't fetched twice.
+	Cover func(url string) ([]byte, error)
 	// Changed, if set, hears that what plays, where it is or whether it
 	// plays changed.
 	Changed func()
@@ -590,8 +593,12 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.announce(&t, nil)
 	p.refill()
 
+	fetch := p.Cover
+	if fetch == nil {
+		fetch = netease.Fetch
+	}
 	go func() {
-		cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600))
+		cover, err := fetch(netease.Sized(t.Album.PicURL, 600))
 		if err == nil {
 			p.post(func() {
 				if gen == p.gen {

@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/egoist/mygo"
@@ -19,28 +21,38 @@ func newSongCache(mb int) *player.Cache {
 	return player.NewCache(filepath.Join(dir, "songs"), int64(mb)<<20)
 }
 
-// applyCacheLimit gives the cache the limit the settings say.
+// applyCacheLimit gives the cache the limit the settings say. With none,
+// the covers kept on disk go too, and no more are kept.
 func (a *app) applyCacheLimit() {
-	if cache := a.pl.Cache; cache != nil {
-		limit := int64(a.settings.CacheMB) << 20
-		go func() {
-			cache.SetLimit(limit)
-			a.measureCache()
-		}()
-	}
+	songs, art := a.pl.Cache, a.art
+	limit := int64(a.settings.CacheMB) << 20
+	art.off.Store(limit == 0)
+	go func() {
+		if songs != nil {
+			songs.SetLimit(limit)
+		}
+		if limit == 0 {
+			art.clear()
+		}
+		a.post(a.measureCache)
+	}()
 }
 
-// measureCache finds how much the cache takes, on a goroutine, for the
-// settings to show.
+// measureCache finds how much the songs kept take, and every cache with
+// them, on a goroutine, for the settings to show.
 func (a *app) measureCache() {
-	cache := a.pl.Cache
-	if cache == nil {
-		return
-	}
+	songs, dirs := a.pl.Cache, a.cacheDirs()
 	go func() {
-		n := cache.Size()
+		var kept int64
+		if songs != nil {
+			kept = songs.Size()
+		}
+		all := kept
+		for _, dir := range dirs {
+			all += dirSize(dir)
+		}
 		a.post(func() {
-			a.cacheUsed = n
+			a.cacheUsed, a.cacheAll = kept, all
 			if a.settingsWin != nil {
 				a.settingsWin.Invalidate()
 			}
@@ -48,19 +60,55 @@ func (a *app) measureCache() {
 	}()
 }
 
-func (a *app) clearCache() {
-	if cache := a.pl.Cache; cache != nil {
-		a.cacheUsed = 0
-		go func() {
-			cache.Clear()
-			a.measureCache()
-		}()
+// cacheDirs returns the caches kept beside the songs: the covers, and the
+// transcripts of episodes.
+func (a *app) cacheDirs() []string {
+	var dirs []string
+	if a.art.dir != "" {
+		dirs = append(dirs, a.art.dir)
 	}
+	if dir, err := transcriptDir(); err == nil {
+		dirs = append(dirs, dir)
+	}
+	return dirs
 }
 
-// cacheUsage says how much the cache takes, once measured.
-func (a *app) cacheUsage() string {
-	switch n := a.cacheUsed; {
+// dirSize returns how many bytes the files in dir take.
+func dirSize(dir string) int64 {
+	var n int64
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() {
+			if info, err := d.Info(); err == nil {
+				n += info.Size()
+			}
+		}
+		return nil
+	})
+	return n
+}
+
+// clearCache drops every cache: the songs kept, the covers and the
+// transcripts. The episode playing, as the song, keeps its transcript
+// again as it goes on.
+func (a *app) clearCache() {
+	a.cacheUsed, a.cacheAll = 0, 0
+	songs, art := a.pl.Cache, a.art
+	transcripts, err := transcriptDir()
+	go func() {
+		if songs != nil {
+			songs.Clear()
+		}
+		art.clear()
+		if err == nil {
+			os.RemoveAll(transcripts)
+		}
+		a.post(a.measureCache)
+	}()
+}
+
+// cacheUsage says how much a cache of n bytes takes, once measured.
+func cacheUsage(n int64) string {
+	switch {
 	case n < 0:
 		return "正在计算已用空间…"
 	case n >= 1<<30:

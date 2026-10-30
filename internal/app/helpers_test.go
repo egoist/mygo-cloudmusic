@@ -12,7 +12,7 @@ func newTestApp() *app {
 		podcasts: map[int64]*podcastData{}, podcastTab: &podcastTab{}, searches: map[route]*searchData{},
 		lyricAt: -1, queueAt: -1,
 	}
-	a.art = newArtCache(func(func()) {})
+	a.art = newArtCache(func(func()) {}, "")
 	a.pl = player.New(func(func()) {})
 	a.pl.SetVolume(0.5)
 	return a

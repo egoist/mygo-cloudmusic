@@ -99,12 +99,21 @@ func modelDir() (string, error) {
 	return filepath.Join(dir, "models"), nil
 }
 
-func transcriptPath(program int64) (string, error) {
+// transcriptDir is where the transcripts of episodes are kept.
+func transcriptDir() (string, error) {
 	dir, err := mygo.App.Path(mygo.PathCache)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "transcripts", strconv.FormatInt(program, 10)+".json"), nil
+	return filepath.Join(dir, "transcripts"), nil
+}
+
+func transcriptPath(program int64) (string, error) {
+	dir, err := transcriptDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, strconv.FormatInt(program, 10)+".json"), nil
 }
 
 // captionsShown reports whether the app can make captions on this

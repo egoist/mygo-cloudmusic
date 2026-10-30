@@ -481,13 +481,20 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 	return res.Lrc.Lyric, res.Tlyric.Lyric, yrc, nil
 }
 
-// Sized asks the image CDN for a picture of n×n pixels.
+// Sized asks the image CDN for a picture of n×n pixels, cropped to the
+// square, as JPEG. Sized alone, a picture keeps the format it was
+// uploaded in, and a cover uploaded as PNG is over 100 KB at 240 pixels,
+// where as JPEG it is about 10: a line far from the CDN takes that in a
+// round trip, and the PNG in many. Not WebP, a quarter smaller still: the
+// system's Now Playing takes PNG or JPEG alone, and the player hands it
+// this cover. Quality alone leaves a PNG as it is; thumbnail's y crops as
+// param does, where x fits the picture inside.
 func Sized(pic string, n int) string {
 	if pic == "" {
 		return ""
 	}
 	pic = strings.Replace(pic, "http://", "https://", 1)
-	return fmt.Sprintf("%s?param=%dy%d", pic, n, n)
+	return fmt.Sprintf("%s?imageView=1&thumbnail=%dy%d&type=jpg&quality=75", pic, n, n)
 }
 
 // Fetch returns what is at url, as a cover the image CDN serves.
@@ -503,7 +510,15 @@ func Fetch(url string) ([]byte, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, errors.New(res.Status)
+		return nil, StatusError(res.StatusCode)
 	}
 	return io.ReadAll(res.Body)
+}
+
+// StatusError is the status of an answer other than 200 OK, as Fetch
+// returns it.
+type StatusError int
+
+func (e StatusError) Error() string {
+	return fmt.Sprintf("%d %s", int(e), http.StatusText(int(e)))
 }

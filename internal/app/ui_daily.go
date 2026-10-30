@@ -174,7 +174,7 @@ func (a *app) dailyPlaying() (ours, playing bool) {
 // still loading, takes NetEase's red.
 func dailyColors(art *artwork) (deep, rich, glow ui.Color) {
 	h, s := 356.0, 0.74
-	if art != nil && !art.failed {
+	if art != nil && !art.failed() {
 		th, ts, _ := hsv(float64(art.tint.R)/255, float64(art.tint.G)/255, float64(art.tint.B)/255)
 		if ts > 0.15 {
 			h, s = th, min(max(ts*1.2, 0.5), 0.78)

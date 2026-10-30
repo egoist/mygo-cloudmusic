@@ -139,6 +139,7 @@ type app struct {
 	settings    settings
 	settingsWin *mygo.Window
 	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
+	cacheAll    int64 // the bytes every cache takes, the songs among them, -1 until measured
 	updates     bool  // the update plugin is used (useUpdater)
 
 	restored     bool   // playback picked up where it was left
@@ -197,6 +198,7 @@ func Run() error {
 		lyricAt:    -1,
 		queueAt:    -1,
 		cacheUsed:  -1,
+		cacheAll:   -1,
 	}
 	moveOldData()
 	a.useUpdater()
@@ -206,10 +208,13 @@ func Run() error {
 		a.npPane = a.lyricsPaneChosen()
 		// Before the window: on Windows it lays out its content as it is
 		// made, and the view asks the player what plays.
-		a.art = newArtCache(a.post)
+		a.art = newArtCache(a.post, artDir())
+		a.art.off.Store(a.settings.CacheMB == 0)
+		go pruneArt(a.art.dir, artDiskLimit)
 		a.pl = player.New(a.post)
 		a.pl.Quality = func() string { return a.settings.Quality }
 		a.pl.Normalize = func() bool { return a.settings.Normalize }
+		a.pl.Cover = a.art.cover
 		a.pl.Cache = newSongCache(a.settings.CacheMB)
 		a.pl.Changed = func() {
 			a.keepSession()

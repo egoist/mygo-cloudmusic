@@ -3,11 +3,16 @@ package app
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"image"
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
+	"net/http"
+	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -22,31 +27,76 @@ import (
 type artwork struct {
 	bmp      *ui.Bitmap
 	backdrop *ui.Bitmap
-	tint     ui.Color // the cover's most vivid color
-	failed   bool
+	tint     ui.Color  // the cover's most vivid color
+	fails    int       // how many times in a row it failed to load
+	retry    time.Time // when one that failed loads again, zero for never
 	used     time.Time // when it was last asked for
+}
+
+// failed reports whether the cover failed to load, the last time it tried.
+func (a *artwork) failed() bool { return a.fails > 0 }
+
+// due reports whether the cover, failed, is to load again at now; one
+// that isn't there to load never is.
+func (a *artwork) due(now time.Time) bool {
+	return a.failed() && !a.retry.IsZero() && !now.Before(a.retry)
 }
 
 // artCache loads covers on goroutines and keeps them while they show, and
 // for a while after: their pixels on the GPU, and on the CPU only their
-// data, which takes a fraction of the pixels. Its methods run on the main
-// thread; post runs a function there.
+// data, which takes a fraction of the pixels. Those it loads it keeps on
+// disk too, in dir, unless it is "" or off. Its methods run on the main
+// thread, but for cover, fetch, load, keep and clear, which run on
+// goroutines; post runs a function on the main thread.
 type artCache struct {
-	art   map[string]*artwork
-	busy  map[string]bool
-	sem   chan struct{}
-	post  func(func())
-	now   func() time.Time
-	swept time.Time
-	asked time.Time // when a cover was last asked for
+	art      map[string]*artwork
+	busy     map[string]bool
+	dir      string
+	off      atomic.Bool  // keeps none on disk, as the songs kept are off
+	disk     sync.Mutex   // held as a cover is kept on disk, and as they all go
+	cleared  atomic.Int64 // how many times they all went; it changes under disk
+	flying   sync.Mutex
+	flights  map[string]*flight // the covers fetching, by URL
+	fetching chan struct{}
+	decoding chan struct{}
+	post     func(func())
+	wake     func(time.Duration) // asks for a frame after a while
+	now      func() time.Time
+	swept    time.Time
+	asked    time.Time // when a cover was last asked for
 }
 
 // artKeep is how long a cover not asked for stays: the pages scrolled
 // through over a session show thousands.
 const artKeep = 5 * time.Minute
 
-func newArtCache(post func(func())) *artCache {
-	return &artCache{art: map[string]*artwork{}, busy: map[string]bool{}, sem: make(chan struct{}, 8), post: post, now: time.Now, swept: time.Now()}
+// How many covers fetch at once, and how many decode. They come over one
+// HTTP/2 connection to the CDN, which takes 128 at once, each a round trip
+// that is most of a second far from it: 8 at once, as decoding is, took
+// the wall's 40 covers 3 seconds in five rounds, where 32 take one.
+const (
+	artFetches = 32
+	artDecodes = 8
+)
+
+func newArtCache(post func(func()), dir string) *artCache {
+	c := &artCache{art: map[string]*artwork{}, busy: map[string]bool{}, dir: dir, flights: map[string]*flight{}, fetching: make(chan struct{}, artFetches), decoding: make(chan struct{}, artDecodes), post: post, now: time.Now, swept: time.Now()}
+	c.wake = func(d time.Duration) { time.AfterFunc(d, func() { c.post(func() {}) }) }
+	return c
+}
+
+// artRetry is how long a cover that failed to load n times in a row waits
+// to load again: a few seconds after a timeout, longer while the network
+// stays away, up to a minute.
+func artRetry(n int) time.Duration {
+	return min(5*time.Second<<min(n-1, 4), time.Minute)
+}
+
+// artGone reports whether err says the cover isn't there to load, now or
+// later: a 404 or a 403, any 4xx but a timeout or too many asked at once.
+func artGone(err error) bool {
+	var st netease.StatusError
+	return errors.As(err, &st) && st >= 400 && st < 500 && st != http.StatusRequestTimeout && st != http.StatusTooManyRequests
 }
 
 // sweep drops the covers not asked for in artKeep before the last one
@@ -65,7 +115,8 @@ func (c *artCache) sweep(now time.Time) {
 	}
 }
 
-// get returns the cover at url, or nil while it loads.
+// get returns the cover at url: nil while it first loads, and the one that
+// failed while it loads again.
 func (c *artCache) get(url string, backdrop bool) *artwork {
 	if url == "" {
 		return nil
@@ -77,18 +128,19 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 	now := c.now()
 	c.sweep(now)
 	c.asked = now
-	if a, ok := c.art[key]; ok {
+	a, ok := c.art[key]
+	if ok {
 		a.used = now
+	}
+	// One that failed, to a timeout or the network gone, loads again once
+	// its wait is over, while it shows; until it comes, it stays failed.
+	if ok && !a.due(now) || c.busy[key] {
 		return a
 	}
-	if c.busy[key] {
-		return nil
-	}
 	c.busy[key] = true
+	path, gen := c.artPath(url), c.cleared.Load()
 	go func() {
-		c.sem <- struct{}{}
-		bmp, img, err := loadArt(url)
-		<-c.sem
+		bmp, img, err := c.load(url, path, gen)
 		var blurred *image.RGBA
 		var tint ui.Color
 		if err == nil {
@@ -100,7 +152,18 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 		c.post(func() {
 			delete(c.busy, key)
 			if err != nil {
-				c.art[key] = &artwork{failed: true, used: c.now()}
+				a := &artwork{fails: 1, used: c.now()}
+				if old := c.art[key]; old != nil {
+					a.fails += old.fails
+				}
+				// One the CDN hasn't got stays failed, until it is swept.
+				if !artGone(err) {
+					wait := artRetry(a.fails)
+					a.retry = c.now().Add(wait)
+					// Drawn again then, a page asks for it again.
+					c.wake(wait)
+				}
+				c.art[key] = a
 				return
 			}
 			a := &artwork{bmp: bmp, tint: tint, used: c.now()}
@@ -113,20 +176,95 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 			time.AfterFunc(artRelease, func() { mygo.RunOnMain(bmp.ReleasePixels) })
 		})
 	}()
-	return nil
+	return a
 }
 
 // artRelease is how long a cover keeps its pixels once loaded: past the
 // frame that first shows it, and the smaller copies it shows from there.
 const artRelease = 2 * time.Second
 
-// loadArt fetches the cover at url, as a bitmap to draw and an image to
-// measure.
-func loadArt(url string) (*ui.Bitmap, image.Image, error) {
-	b, err := netease.Fetch(url)
+// fetchCover fetches a cover from the CDN; tests replace it.
+var fetchCover = netease.Fetch
+
+// load returns the cover at url, through fetch, as a bitmap to draw and an
+// image to measure.
+func (c *artCache) load(url, path string, gen int64) (*ui.Bitmap, image.Image, error) {
+	b, err := c.fetch(url, path, gen)
 	if err != nil {
 		return nil, nil, err
 	}
+	bmp, img, err := c.decode(b)
+	// Kept as its header read, one that doesn't decode wouldn't again.
+	if err != nil && path != "" {
+		os.Remove(path)
+	}
+	return bmp, img, err
+}
+
+// cover returns the cover at url as the CDN sent it, for the player to
+// show the system: from disk when it is kept, or fetched and kept.
+func (c *artCache) cover(url string) ([]byte, error) {
+	return c.fetch(url, c.artPath(url), c.cleared.Load())
+}
+
+// flight is a cover fetching, which those that ask for it meanwhile wait
+// for: a page and the player ask for the one a song starts with at once.
+type flight struct {
+	done chan struct{}
+	b    []byte
+	err  error
+}
+
+// fetch reads the cover at url from disk, at path, or fetches it and keeps
+// it there, unless the covers kept all went since gen.
+func (c *artCache) fetch(url, path string, gen int64) ([]byte, error) {
+	c.flying.Lock()
+	if f := c.flights[url]; f != nil {
+		c.flying.Unlock()
+		<-f.done
+		return f.b, f.err
+	}
+	f := &flight{done: make(chan struct{})}
+	c.flights[url] = f
+	c.flying.Unlock()
+	defer func() {
+		c.flying.Lock()
+		delete(c.flights, url)
+		c.flying.Unlock()
+		close(f.done)
+	}()
+	if b, ok := readArt(path); ok {
+		if checkCover(b) == nil {
+			f.b = b
+			return b, nil
+		}
+		os.Remove(path)
+	}
+	c.fetching <- struct{}{}
+	b, err := fetchCover(url)
+	<-c.fetching
+	// Kept only once its header reads: not a page of an error, sent as
+	// 200.
+	if err == nil {
+		err = checkCover(b)
+	}
+	if err == nil {
+		c.keep(path, b, gen)
+	}
+	f.b, f.err = b, err
+	return b, err
+}
+
+// checkCover reports whether b is a picture the decoders read, by its
+// header alone.
+func checkCover(b []byte) error {
+	_, _, err := image.DecodeConfig(bytes.NewReader(stillCover(b)))
+	return err
+}
+
+func (c *artCache) decode(b []byte) (*ui.Bitmap, image.Image, error) {
+	c.decoding <- struct{}{}
+	defer func() { <-c.decoding }()
 	return decodeArt(b)
 }
 

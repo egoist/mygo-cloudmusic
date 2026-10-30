@@ -465,7 +465,7 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 			Lyric string `json:"lyric"`
 		} `json:"tlyric"`
 	}
-	q := url.Values{"id": {strconv.FormatInt(id, 10)}, "lv": {"1"}, "tv": {"-1"}}
+	q := url.Values{"id": {strconv.FormatInt(id, 10)}, "lv": {"-1"}, "tv": {"-1"}}
 	if err = get("/api/song/lyric", q, &res); err != nil {
 		return "", "", "", err
 	}

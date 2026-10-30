@@ -40,6 +40,10 @@ type settings struct {
 	// StageSparks throws sparks off each word on the stage as it is sung,
 	// whatever its style.
 	StageSparks bool `json:"stageSparks,omitempty"`
+	// LyricsText is what the lyrics show under each line: nothing, what it
+	// says in the listener's language, or its romaji (lyricsTexts), the
+	// translation where it was chosen and the line has one.
+	LyricsText string `json:"lyricsText,omitempty"`
 	// Volume is where the volume was left, from 0 to 1.
 	Volume float64 `json:"volume"`
 	// Normalize evens out the loudness of tracks, by what NetEase
@@ -68,7 +72,32 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
+	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true, LyricsText: lyricTranslation}
+}
+
+// The kinds of line the lyrics show under each of theirs, from what
+// NetEase serves of them, or none.
+const (
+	lyricOnly        = "only"
+	lyricTranslation = "translation"
+	lyricRoma        = "roma"
+)
+
+// lyricsTexts are the kinds of second line the lyrics may show, in the order
+// the toggle goes through them: the lyrics alone first.
+var lyricsTexts = []struct{ id, label string }{
+	{lyricOnly, "仅歌词"},
+	{lyricTranslation, "翻译"},
+	{lyricRoma, "发音"},
+}
+
+// lyricsText is the kind of second line the lyrics show: the listener's
+// choice, or the translation.
+func (s settings) lyricsText() string {
+	if s.LyricsText == "" {
+		return lyricTranslation
+	}
+	return s.LyricsText
 }
 
 func settingsPath() (string, error) {

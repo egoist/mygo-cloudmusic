@@ -10,13 +10,15 @@ import (
 	"unicode/utf8"
 )
 
-// A Line is a line of timed lyrics, with its translation if any, and
-// when each of its words is sung.
+// A Line is a line of timed lyrics, with its translation if any, its
+// romaji where NetEase transliterates it, and when each of its words is
+// sung.
 type Line struct {
 	At          time.Duration
 	End         time.Duration
 	Text        string
 	Translation string
+	Roma        string
 	Words       []Word
 	// Timed says the words carry their own times, as NetEase's word-timed
 	// lyrics give them; else they share the line's time evenly.
@@ -109,8 +111,8 @@ func parseYRC(yrc string) []Line {
 
 // Build makes the lines to show from what NetEase serves: the
 // word-timed lyrics where there are some, else the timed lines, with the
-// translation of each.
-func Build(lrc, translation, yrc string) []Line {
+// translation of each and its romaji.
+func Build(lrc, translation, roma, yrc string) []Line {
 	var lines []Line
 	if yrc != "" {
 		lines = parseYRC(yrc)
@@ -130,9 +132,17 @@ func Build(lrc, translation, yrc string) []Line {
 			lines[i].Words = SpreadWords(lines[i].Text, lines[i].At, end)
 		}
 	}
-	// Translations go to the line nearest their time: word-timed lines
-	// start a little off the timed lines the translation follows.
-	for _, t := range parseLRC(translation) {
+	attach(lines, translation, func(l *Line) *string { return &l.Translation })
+	attach(lines, roma, func(l *Line) *string { return &l.Roma })
+	return lines
+}
+
+// attach gives each of lines the text of lrc nearest its time, if it has
+// none there yet: translations and romaji go to the line nearest their
+// time, since word-timed lines start a little off the timed lines they
+// follow.
+func attach(lines []Line, lrc string, of func(*Line) *string) {
+	for _, t := range parseLRC(lrc) {
 		if t.Text == "" {
 			continue
 		}
@@ -146,17 +156,32 @@ func Build(lrc, translation, yrc string) []Line {
 				best, bestGap = i, gap
 			}
 		}
-		if best >= 0 && lines[best].Translation == "" {
-			lines[best].Translation = t.Text
+		if best >= 0 {
+			if f := of(&lines[best]); *f == "" {
+				*f = t.Text
+			}
 		}
 	}
-	return lines
 }
 
-// mergeLyrics pairs timed lines with their translations, without words'
-// own times.
-func mergeLyrics(lrc, translation string) []Line {
-	return Build(lrc, translation, "")
+// HasTranslation reports whether any of lines has a translation.
+func HasTranslation(lines []Line) bool {
+	return anyLine(lines, func(l *Line) string { return l.Translation })
+}
+
+// HasRoma reports whether any of lines has its romaji.
+func HasRoma(lines []Line) bool {
+	return anyLine(lines, func(l *Line) string { return l.Roma })
+}
+
+// anyLine reports whether any of lines has text of the kind of asks for.
+func anyLine(lines []Line, of func(*Line) string) bool {
+	for i := range lines {
+		if of(&lines[i]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // SpreadWords splits text into words, each Chinese, Japanese or Korean

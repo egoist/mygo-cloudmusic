@@ -6,8 +6,8 @@ import (
 )
 
 func TestParseLRC(t *testing.T) {
-	lines := mergeLyrics("[00:01.000] 作词 : 某人\n[00:30.54]故事的小黄花\n[00:34.165][01:10.1]从出生那年就飘着\n[00:40.00]\n",
-		"[00:30.54]The little yellow flower\n")
+	lines := Build("[00:01.000] 作词 : 某人\n[00:30.54]故事的小黄花\n[00:34.165][01:10.1]从出生那年就飘着\n[00:40.00]\n",
+		"[00:30.54]The little yellow flower\n", "", "")
 	if len(lines) != 4 {
 		t.Fatalf("got %d lines: %+v", len(lines), lines)
 	}
@@ -29,7 +29,7 @@ func TestParseYRC(t *testing.T) {
 	yrc := `{"t":0,"c":[{"tx":"作词: "},{"tx":"某人"}]}
 [13010,4780](13010,660,0)从(13670,670,0)不(14340,30,0) (14370,480,0)主
 [17790,1770](17790,170,0)I(17960,450,0) (18410,290,0)love`
-	lines := Build("", "[00:13.00]Never\n[00:17.80]我爱", yrc)
+	lines := Build("", "[00:13.00]Never\n[00:17.80]我爱", "", yrc)
 	if len(lines) != 2 || !lines[0].Timed {
 		t.Fatalf("lines %+v", lines)
 	}
@@ -42,6 +42,22 @@ func TestParseYRC(t *testing.T) {
 	}
 	if l.Translation != "Never" || lines[1].Translation != "我爱" {
 		t.Errorf("translations %q %q", l.Translation, lines[1].Translation)
+	}
+}
+
+// Romaji pairs with the word-timed line nearest its time, as translations
+// do, though NetEase times it a little off the lines it follows.
+func TestBuildRoma(t *testing.T) {
+	yrc := "[20570,1900](20570,360,0)初(20930,150,0)めて\n[22760,2130](22760,210,0)な(22970,160,0)んて"
+	lines := Build("", "", "[00:20.542]ha ji me te\n[00:22.559]na n te", yrc)
+	if len(lines) != 2 {
+		t.Fatalf("lines %+v", lines)
+	}
+	if lines[0].Roma != "ha ji me te" || lines[1].Roma != "na n te" {
+		t.Errorf("romaji %q %q", lines[0].Roma, lines[1].Roma)
+	}
+	if lines[0].Translation != "" || !HasRoma(lines) || HasTranslation(lines) {
+		t.Errorf("translation %q, romaji %v, translation %v", lines[0].Translation, HasRoma(lines), HasTranslation(lines))
 	}
 }
 

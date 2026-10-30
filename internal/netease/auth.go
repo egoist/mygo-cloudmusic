@@ -33,7 +33,13 @@ func sessionFile() (string, error) {
 
 func readSession() ([]byte, error) {
 	if !mygo.IsDev() {
-		return mygo.Secrets.Get(sessionSecret)
+		var session []byte
+		err := retrySecretStore(func() error {
+			var err error
+			session, err = mygo.Secrets.Get(sessionSecret)
+			return err
+		}, startKDESecretService)
+		return session, err
 	}
 	path, err := sessionFile()
 	if err != nil {
@@ -44,7 +50,9 @@ func readSession() ([]byte, error) {
 
 func writeSession(b []byte) error {
 	if !mygo.IsDev() {
-		return mygo.Secrets.Set(sessionSecret, b)
+		return retrySecretStore(func() error {
+			return mygo.Secrets.Set(sessionSecret, b)
+		}, startKDESecretService)
 	}
 	path, err := sessionFile()
 	if err != nil {
@@ -58,7 +66,9 @@ func writeSession(b []byte) error {
 
 func deleteSession() {
 	if !mygo.IsDev() {
-		mygo.Secrets.Delete(sessionSecret)
+		_ = retrySecretStore(func() error {
+			return mygo.Secrets.Delete(sessionSecret)
+		}, startKDESecretService)
 		return
 	}
 	if path, err := sessionFile(); err == nil {

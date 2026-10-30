@@ -99,8 +99,9 @@ func (a *app) pollLogin(gen int, key string) {
 			time.Sleep(2 * time.Second)
 			code, msg, name, avatar, err := netease.QRCheck(key)
 			var prof *netease.Profile
+			var saveErr error
 			if code == netease.QRConfirmed {
-				netease.SaveSession()
+				saveErr = netease.SaveSession()
 				prof, _ = netease.Account()
 			}
 			done := make(chan bool, 1)
@@ -118,6 +119,9 @@ func (a *app) pollLogin(gen int, key string) {
 					a.signedIn(prof)
 					if prof != nil {
 						a.pickUp(prof.UserID)
+					}
+					if saveErr != nil {
+						a.toast = "登录成功，但登录状态无法保存"
 					}
 					a.closeLoginSoon(gen)
 				case code == netease.QRExpired || code == netease.QRWaiting || code == netease.QRScanned:

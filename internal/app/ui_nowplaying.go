@@ -56,8 +56,11 @@ func (a *app) nowPlayingLayer(c *ui.Context, open, settled bool) {
 	}
 	layer.AnimatePose(pose, npSpring)
 	if !open && settled || a.pl.Current() == nil {
-		// Closed: nothing to paint or click.
+		// Closed: nothing to paint or click. The backdrop's canvas, as big
+		// as the window, goes with it, rather than waiting for the next
+		// song to paint over it.
 		layer.Invisible()
+		a.backdropCache = backdropCache{}
 		a.queueAt, a.wallState.track = -1, 0
 		return
 	}

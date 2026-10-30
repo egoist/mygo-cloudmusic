@@ -14,9 +14,13 @@ import (
 // The backdrop of Now Playing paints the cover's colors behind it, as
 // NetEase's own player does: a deep gradient of its main color, lighter at
 // the top, with the cover itself, blurred, faintly through it. It stays
-// still, so it is painted once a song, into a small canvas an eighth of the
-// window across, which shows scaled up as smooth as it is: what moves over
-// it then draws one image under it.
+// still, so it is painted once a song, into a canvas of its own, the
+// window's DIPs on the GPU and an eighth of them on the CPU, where a shader
+// over every pixel would be too slow: what moves over it then draws one
+// image under it. The canvas holds eight bits a channel, so the backdrop is
+// painted with half a code of dither, a pixel at a time: without it its
+// steps show as bands, even on a screen that could show more than eight
+// bits, as neither the canvas nor the window's frames use a wider format.
 //
 // The experimental fog (settings.Fog) makes it alive, as NetEase's mobile
 // player's is: fog of the cover's color, billowing as it rises slowly
@@ -100,6 +104,76 @@ func Fragment(dst vec4, pos vec2) vec4 {
 
 var fogShader = sync.OnceValue(func() *shader.Shader { return shader.MustCompile(fogSource) })
 
+// stillSource paints the still backdrop: LabTop at the top, LabFoot at the
+// foot, mixed in Oklab, with the cover's blurred wash through it and darker
+// toward the foot, all before the dither that keeps its eight bits from
+// banding. The dither is at the canvas's pixels, before their eight bits
+// round the color: that is what keeps a smooth backdrop smooth, where
+// dithering the canvas after it was rounded could only noise the bands.
+//
+// The two ends come in Oklab, converted once in Go: the shader would convert
+// the same colors at every pixel otherwise.
+const stillSource = `package main
+
+var LabTop vec3
+var LabFoot vec3
+var Cover float
+var CoverScale float
+var CoverAt vec2
+
+func srgb(c float) float {
+	a := abs(c)
+	if a <= 0.0031308 {
+		return c * 12.92
+	}
+	return sign(c) * (1.055*pow(a, 1.0/2.4) - 0.055)
+}
+
+func fromOklab(lab vec3) vec3 {
+	l := lab.x + 0.3963377774*lab.y + 0.2158037573*lab.z
+	m := lab.x - 0.1055613458*lab.y - 0.0638541728*lab.z
+	s := lab.x - 0.0894841775*lab.y - 1.2914855480*lab.z
+	l = l * l * l
+	m = m * m * m
+	s = s * s * s
+	return vec3(srgb(4.0767416621*l-3.3077115913*m+0.2309699292*s),
+		srgb(-1.2684380046*l+2.6097574011*m-0.3413193965*s),
+		srgb(-0.0041960863*l-0.7034186147*m+1.7076147010*s))
+}
+
+func hash(p vec2) float {
+	p = fract(p * vec2(0.1031, 0.1030))
+	p = p + dot(p, p+vec2(33.33, 33.33))
+	return fract((p.x+p.y)*p.x)
+}
+
+func Fragment(dst vec4, pos vec2) vec4 {
+	t := clamp(pos.y/rectSize().y, 0.0, 1.0)
+	c := fromOklab(mix(LabTop, LabFoot, t))
+	if Cover > 0.5 {
+		// The cover, blurred, as a faint wash of its own colors. Its
+		// image is sampled between its pixels, which keeps the wash smooth
+		// where its own eight bits would step.
+		cs := image0Size()
+		uv := (pos - CoverAt) / CoverScale
+		if uv.x >= 0.0 && uv.y >= 0.0 && uv.x < cs.x && uv.y < cs.y {
+			c = mix(c, image0Sample(uv).rgb, 0.1)
+		}
+	}
+	// Darker toward the foot, under the controls.
+	a := 0.18 * clamp((t-0.55)/0.45, 0.0, 1.0)
+	c = c * (1.0 - a)
+	// Two hashes make the noise triangular, so that it settles around
+	// the color instead of drifting from it.
+	p := floor(vec2(dst.x, dst.y))
+	n := hash(p) + hash(p+vec2(37.0, 17.0)) - 1.0
+	d := n / 510.0
+	return vec4(clamp(c.x+d, 0.0, 1.0), clamp(c.y+d, 0.0, 1.0), clamp(c.z+d, 0.0, 1.0), 1.0)
+}
+`
+
+var stillShader = sync.OnceValue(func() *shader.Shader { return shader.MustCompile(stillSource) })
+
 // backdropFrame is how often the fog is painted while it moves.
 const backdropFrame = time.Second / 30
 
@@ -127,14 +201,19 @@ func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color) {
 	pl := a.pl
 	fog, still := a.settings.Fog, c.Preferences().ReduceMotion
 	ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
-		// The CPU, drawing the fog for want of a GPU, paints far fewer
-		// pixels, and those once a song: the fog stays still.
+		// The fog paints into a canvas of its own, smaller on the CPU, and
+		// those once a song: it stays still. The still backdrop is at the
+		// window's DIPs on the GPU, where a DIP is two pixels of a Retina
+		// screen, and an eighth of that on the CPU.
 		gpu := p.Accelerated()
-		div := float32(8)
-		if fog && gpu {
+		div := float32(1)
+		if !gpu {
+			div = 8
+		} else if fog {
 			div = 2
 		}
-		cw, ch := int(r.W/div)+1, int(r.H/div)+1
+		cw := max(1, int(math.Ceil(float64(r.W/div))))
+		ch := max(1, int(math.Ceil(float64(r.H/div))))
 		bd := &a.backdropCache
 		if bd.canvas != nil {
 			if w, h := bd.canvas.Size(); w != cw || h != ch {
@@ -207,17 +286,40 @@ func (bd *backdropCache) step(now time.Time, playing bool, lv [player.Bands]floa
 // drawBackdrop paints the still backdrop in r.
 func drawBackdrop(p *ui.Painter, r ui.Rect, art *artwork, tint ui.Color) {
 	top, foot := backdropColors(tint)
-	p.FillGradient(r, ui.LinearGradient{Angle: 180, Oklab: true, Stops: []ui.GradientStop{
-		{Color: top, At: 0}, {Color: foot, At: 1},
-	}}, 0)
+	o := shader.Options{Uniforms: map[string]any{
+		"LabTop": oklabColor(top), "LabFoot": oklabColor(foot), "Cover": float32(0),
+	}}
 	if art != nil && art.backdrop != nil {
-		// The cover, blurred, as a faint wash of its own colors.
-		p.ImageRegion(art.backdrop, ui.Rect{W: 48, H: 48}, coverRect(r, 48, 48), ui.ImageOptions{Tint: white.Alpha(0.1)})
+		if w, h := art.backdrop.Size(); w > 0 && h > 0 {
+			fw, fh := float32(w), float32(h)
+			s := max(r.W/fw, r.H/fh)
+			o.Images[0] = art.backdrop
+			o.Uniforms["Cover"] = float32(1)
+			o.Uniforms["CoverScale"] = s
+			o.Uniforms["CoverAt"] = [2]float32{(r.W - fw*s) / 2, (r.H - fh*s) / 2}
+		}
 	}
-	// Darker toward the foot, under the controls.
-	p.FillGradient(r, ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
-		{Color: ui.RGBA(0, 0, 0, 0), At: 0.55}, {Color: ui.RGBA(0, 0, 0, 0.18), At: 1},
-	}}, 0)
+	stillShader().Draw(p, r, o)
+}
+
+// oklabColor returns c in Oklab, as stillSource mixes its two ends.
+func oklabColor(c ui.Color) [3]float32 {
+	linear := func(v uint8) float64 {
+		s := float64(v) / 255
+		if s <= 0.04045 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	r, g, b := linear(c.R), linear(c.G), linear(c.B)
+	l := math.Cbrt(0.4122214708*r + 0.5363325363*g + 0.0514459929*b)
+	m := math.Cbrt(0.2119034982*r + 0.6806995451*g + 0.1073969566*b)
+	s := math.Cbrt(0.0883024619*r + 0.2817188376*g + 0.6299787005*b)
+	return [3]float32{
+		float32(0.2104542553*l + 0.7936177850*m - 0.0040720468*s),
+		float32(1.9779984951*l - 2.4285922050*m + 0.4505937099*s),
+		float32(0.0259040371*l + 0.7827717662*m - 0.8086757660*s),
+	}
 }
 
 // coverRect returns where an image of w×h goes to cover r, centered.

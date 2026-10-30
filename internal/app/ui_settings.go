@@ -6,6 +6,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"netease-music-mygo/internal/netease"
 )
 
 // openSettings shows the settings window, opening it the first time.
@@ -149,6 +151,12 @@ func (a *app) settingsView(c *ui.Context) {
 			row("音量均衡", "按网易云音乐测得的响度调整每首歌的音量，让歌曲听起来一样响", func() {
 				if ui.Switch(c.Key("normalize"), &s.Normalize).Label("音量均衡").Changed() {
 					a.pl.SetVolume(a.volume)
+					a.changed()
+				}
+			})
+			row("灰度歌曲音源", "开启后会将歌曲 ID、名称和歌手发给 GD Studio、酷狗和酷我匹配替代音源", func() {
+				if ui.Switch(c.Key("gray-song-fallback"), &s.GraySongFallback).Label("灰度歌曲音源").Changed() {
+					netease.SetGraySongFallback(s.GraySongFallback)
 					a.changed()
 				}
 			})

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +22,13 @@ const apiBase = "https://music.163.com"
 const UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
 var httpClient = &http.Client{Timeout: 20 * time.Second}
+
+var graySongFallback atomic.Bool
+
+// SetGraySongFallback enables or disables alternate sources for unavailable songs.
+func SetGraySongFallback(enabled bool) { graySongFallback.Store(enabled) }
+
+func graySongFallbackEnabled() bool { return graySongFallback.Load() }
 
 type Artist struct {
 	ID   int64  `json:"id"`
@@ -89,6 +97,9 @@ func (t *Track) Playable() bool {
 	if t.ProgramID > 0 {
 		// An episode's audio has no privilege: whether it streams, as a
 		// paid one bought, is up to its stream.
+		return true
+	}
+	if graySongFallbackEnabled() && t.ID > 0 {
 		return true
 	}
 	if t.Privilege != nil {
@@ -386,6 +397,8 @@ func ArtistLatestSongs(id int64, limit int) ([]Track, error) {
 
 var ErrUnavailable = errors.New("this song isn't available to stream")
 
+var ErrGraySongUnavailable = errors.New("no alternate source found")
+
 // Stream is where a track streams from, and what it is.
 type Stream struct {
 	URL  string `json:"-"`
@@ -426,20 +439,20 @@ func SongURL(id int64, level string) (*Stream, error) {
 	}
 	data := map[string]any{"ids": fmt.Sprintf("[%d]", id), "level": level, "encodeType": encode}
 	if err := eapiPost("/api/song/enhance/player/url/v1", data, &res); err != nil {
-		return nil, err
+		return fallbackSongURL(id, level, err)
 	}
 	if len(res.Data) == 0 || res.Data[0].URL == "" {
-		return nil, ErrUnavailable
+		return fallbackSongURL(id, level, ErrUnavailable)
 	}
 	d := res.Data[0]
 	// A preview of a VIP song is no song.
 	if len(d.FreeTrialInfo) > 0 && string(d.FreeTrialInfo) != "null" {
-		return nil, ErrUnavailable
+		return fallbackSongURL(id, level, ErrUnavailable)
 	}
 	s := d.Stream
 	s.Type = strings.ToLower(s.Type)
 	if s.Type != "" && s.Type != "mp3" && s.Type != "flac" {
-		return nil, fmt.Errorf("unsupported format %s", s.Type)
+		return fallbackSongURL(id, level, fmt.Errorf("unsupported format %s", s.Type))
 	}
 	if d.Peak != nil {
 		s.Peak = *d.Peak

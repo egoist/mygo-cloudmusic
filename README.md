@@ -11,6 +11,7 @@
 - 播客：浏览与收听节目，订阅播客；在本机把节目转写成字幕（Qwen3-ASR），像歌词一样随播放滚动
 - 私人 FM（推荐 / 熟悉 / 探索）与心动模式
 - 边下边播，支持标准 / 较高 / 极高 / 无损（FLAC）/ Hi-Res 音质
+- 可选开启灰度歌曲音源：网易云无法播放时，按歌曲 ID 和元数据尝试匹配 GD Studio、酷狗和酷我音源
 - 听过的歌曲缓存在本机，再次播放无需等待
 - 音量均衡，暂停与继续时淡出淡入，拖动进度无杂音
 - 退出后再打开，从上次的播放队列与进度继续
@@ -37,6 +38,8 @@ go test ./...        # 运行测试
 - [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)、[Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 与 [Silero VAD](https://github.com/snakers4/silero-vad)：本机语音识别
 
 本项目与网易云音乐官方无关，音乐版权归各权利人所有。
+
+灰度歌曲匹配参考 [UnblockNeteaseMusic](https://github.com/UnblockNeteaseMusic/server) 的公开音源适配方式，内置 GD Studio、酷狗和酷我音源。开启后会向这些服务发送歌曲 ID、名称和歌手；是否能找到替代音源取决于歌曲和上游服务。改写部分按 LGPL-3.0-only 发布，详见 `third_party/unblockneteasemusic`。
 
 ## 许可证
 

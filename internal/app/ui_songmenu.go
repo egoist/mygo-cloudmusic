@@ -19,15 +19,26 @@ func (a *app) songMenu(c *ui.Context, tr *netease.Track, size float32, color ui.
 }
 
 // songItems builds the menu of what can be done with tr, behind its dots
-// or a right click on its row: copying its title, its title with its
-// artists, or the link to its page, opening its artists' or album's, and,
-// signed in, adding it to a playlist or taking it out of pid, the playlist
-// it is listed in, if set.
+// or a right click on its row: queuing it next or after manual requests,
+// copying its title, credits or link, opening its artists' or album's,
+// and, signed in, adding it to a playlist or taking it out of pid, the
+// playlist it is listed in, if set.
 func (a *app) songItems(tr *netease.Track, pid int64) func(m *ui.Menu) {
 	return func(m *ui.Menu) {
 		if tr.ProgramID != 0 {
 			a.programItems(m, tr)
 			return
+		}
+		if tr.Playable() {
+			if m.Item("下一首播放").Chosen() {
+				a.pl.InsertNext(*tr)
+				a.toast = "已设为下一首播放"
+			}
+			if m.Item("加入插播队列").Chosen() {
+				a.pl.AddToQueue(*tr)
+				a.toast = "已加入插播队列"
+			}
+			m.Separator()
 		}
 		if m.Item("复制歌名").Chosen() {
 			copyText(tr.Name)

@@ -141,6 +141,7 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 				a.paneTabs(c)
 				a.stageStyleButton(c)
 			})
+			reveal(lyricsOptionsRow(c, w), pointerIn).Children(func() { a.lyricsChoices(c) })
 			a.stage(c, tr, accent)
 			a.stageBar(c, tr, art, accent)
 			return
@@ -161,6 +162,9 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 		side = max(coverSize, 280)
 		padX := npSideX(w)
 		reveal(npTabsRow(c, w), pointerIn).Children(func() { a.paneTabs(c) })
+		if a.npPane == paneLyrics {
+			reveal(lyricsOptionsRow(c, w), pointerIn).Children(func() { a.lyricsChoices(c) })
+		}
 		ui.Row(c).Grow(1).Padding(0, padX, 44, padX).Gap(72).AlignItems(ui.Stretch).Children(func() {
 			var coverTop float32
 			ui.Column(c).Width(side).Justify(ui.Center).Gap(0).Children(func() {
@@ -445,6 +449,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) {
 	if a.lyricTrack != tr.ID {
 		a.lyricTrack, a.lyricAt = tr.ID, -2
 		a.lyricScroll, a.lyricGlide = ui.ScrollState{}, lyricGlide{}
+		a.lyricRecenter = 0
 	}
 	lag := a.lyricGlide.step(c, &a.lyricScroll)
 
@@ -519,8 +524,14 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 						} else {
 							ui.Text(c, l.Text).FontSize(st.size).FontWeight(st.weight).LineHeight(st.lineHeight).LetterSpacing(-0.4).TextColor(white)
 						}
-						if l.Translation != "" {
-							ui.Text(c, l.Translation).FontSize(17).FontWeight(600).TextColor(white.Alpha(0.7))
+						// What the line says in words the listener reads: its
+						// translation, or its romaji, as they chose.
+						switch text, kind := a.underLine(&l); {
+						case text == "":
+						case kind == lyricRoma:
+							ui.Text(c, text).FontSize(15).FontWeight(500).TextColor(white.Alpha(0.5))
+						default:
+							ui.Text(c, text).FontSize(17).FontWeight(600).TextColor(white.Alpha(0.7))
 						}
 					})
 				})
@@ -536,21 +547,71 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 			foot()
 		}
 	})
-	// Bring the line sung to a third of the way down, once it changed.
-	if cur != a.lyricAt {
-		box := scroll.Bounds()
-		target := float32(0)
-		if active.Valid() {
-			// Where the glide is going, without where it still is.
-			if lb := active.LayoutBounds(); lb.H > 0 && box.H > 0 {
-				target = lb.Y - box.Y + a.lyricScroll.Y - box.H*0.3
-			} else {
-				return // not laid out yet: the next frame scrolls
-			}
+	spot := lyricSpotOf(scroll, active, a.lyricScroll.Y)
+	// A band around the mark, so that the line on its way there, or a pixel
+	// or two off, still counts as where the lyrics put it, and no line sung
+	// at all, which shows nowhere, counts as it too.
+	a.lyricFocused = spot.off == 0 || abs32(spot.off) < spot.box*lyricFocusBand
+	scrollTo := func() { a.lyricGlide.to(c, &a.lyricScroll, min(max(0, spot.target), a.lyricScroll.MaxY)) }
+	switch {
+	// What the lyrics show changed, and with it the height of the lines
+	// under the one sung, which the frames that follow place: the lyrics
+	// find the line sung again once where it shows holds still, rather
+	// than where the lines still were.
+	case a.lyricRecenter > 0 && spot.laid:
+		placed := a.lyricScroll.MaxY != a.lyricRecenterMax && spot.rowY == a.lyricRowY
+		a.lyricRowY = spot.rowY
+		a.lyricRecenter--
+		if placed || a.lyricRecenter == 0 {
+			a.lyricRecenter = 0
+			a.lyricAt = cur
+			scrollTo()
+			break
+		}
+		c.AnimationFrame()
+	case a.lyricRecenter > 0:
+		a.lyricRecenter = 0
+	case cur != a.lyricAt:
+		// Bring the line sung to a third of the way down, once it changed.
+		if !spot.laid {
+			return // not laid out yet: the next frame scrolls
 		}
 		a.lyricAt = cur
-		a.lyricGlide.to(c, &a.lyricScroll, min(max(0, target), a.lyricScroll.MaxY))
+		scrollTo()
 	}
+}
+
+// lyricFocusBand is how far, as a fraction of the lyrics shown, from the
+// mark that a third of the way down they put the line sung still counts as
+// where they put it: a line or two, but not a screenful.
+const lyricFocusBand = 0.2
+
+// A lyricSpot is where the lyrics put the line sung, and where it shows: a
+// third of the way down, at target, unless the view was not laid out to
+// say, where they scroll to the top.
+type lyricSpot struct {
+	target float32 // how far the lines scroll to put it at the mark
+	off    float32 // how far from the mark it shows, as it is now
+	rowY   float32 // where it shows
+	box    float32 // how tall the lyrics show
+	laid   bool    // whether the frame placed the lines to say
+}
+
+func lyricSpotOf(scroll, active ui.Element, y float32) lyricSpot {
+	spot := lyricSpot{laid: true}
+	if !active.Valid() {
+		return spot
+	}
+	// Where the glide is going, without where it still is.
+	box, lb := scroll.Bounds(), active.LayoutBounds()
+	if lb.H <= 0 || box.H <= 0 {
+		spot.laid = false
+		return spot
+	}
+	spot.off = lb.Y - box.Y - box.H*0.3
+	spot.target = lb.Y - box.Y + y - box.H*0.3
+	spot.rowY, spot.box = lb.Y, box.H
+	return spot
 }
 
 // lyricGlide scrolls the lyrics to the line sung, as a critically damped

@@ -22,7 +22,7 @@ func playingApp() (*app, *ui.Tester, *int) {
 	for i := range 12 {
 		lrc += "[0" + string(rune('0'+i*10/60)) + ":" + string(rune('0'+i*10%60/10)) + "0.00]一二三四五六\n"
 	}
-	lines := lyrics.Build(lrc, "", "")
+	lines := lyrics.Build(lrc, "", "", "")
 	for i := range lines {
 		l := &lines[i]
 		l.End = l.At + 5*time.Second

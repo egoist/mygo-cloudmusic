@@ -453,10 +453,10 @@ func SongURL(id int64, level string) (*Stream, error) {
 	return &s, nil
 }
 
-// Lyrics returns a track's timed lyrics, their translation if any, and
-// its word-timed lyrics (YRC) where NetEase has them, which only the
-// desktop client's API serves.
-func Lyrics(id int64) (lrc, translation, yrc string, err error) {
+// Lyrics returns a track's timed lyrics, their translation if any, its
+// romaji where NetEase transliterates it, and its word-timed lyrics (YRC)
+// where NetEase has them, which only the desktop client's API serves.
+func Lyrics(id int64) (lrc, translation, roma, yrc string, err error) {
 	var res struct {
 		Lrc struct {
 			Lyric string `json:"lyric"`
@@ -467,18 +467,31 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 	}
 	q := url.Values{"id": {strconv.FormatInt(id, 10)}, "lv": {"1"}, "tv": {"-1"}}
 	if err = get("/api/song/lyric", q, &res); err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
+	// The lyrics of the desktop client's API come as objects, or not at
+	// all: read them as they are, so that one missing leaves the rest.
 	var words struct {
-		Yrc struct {
-			Lyric string `json:"lyric"`
-		} `json:"yrc"`
+		Yrc  json.RawMessage `json:"yrc"`
+		Roma json.RawMessage `json:"romalrc"`
 	}
 	data := map[string]any{"id": strconv.FormatInt(id, 10), "cp": false, "tv": 0, "lv": 0, "rv": 0, "kv": 0, "yv": 0, "ytv": 0, "yrv": 0}
 	if eapiPost("/api/song/lyric/v1", data, &words) == nil {
-		yrc = words.Yrc.Lyric
+		yrc, roma = lyricText(words.Yrc), lyricText(words.Roma)
 	}
-	return res.Lrc.Lyric, res.Tlyric.Lyric, yrc, nil
+	return res.Lrc.Lyric, res.Tlyric.Lyric, roma, yrc, nil
+}
+
+// lyricText reads the lyrics of one of the API's lyric objects, as
+// {"lyric": "…"}, and gives nothing for one that is missing.
+func lyricText(raw json.RawMessage) string {
+	var v struct {
+		Lyric string `json:"lyric"`
+	}
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return v.Lyric
 }
 
 // Sized asks the image CDN for a picture of n×n pixels.

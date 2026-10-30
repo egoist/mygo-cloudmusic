@@ -106,11 +106,24 @@ type app struct {
 	lyricScroll ui.ScrollState
 	lyricGlide  lyricGlide
 	lyricAt     int
-	lyricTrack  int64
-	queueList   ui.ListState
-	queueAt     int // the row of the queue pane last scrolled to, -1 while it is hidden
-	comments    commentState
-	tabCount    rollState // the count on the comments' tab, as it rolls
+	// lyricFocused says the line sung shows where the lyrics put it, a
+	// third of the way down, rather than where a listener scrolled away
+	// from it.
+	lyricFocused bool
+	lyricTrack   int64
+	// lyricRecenter is how many frames the lyrics follow the line sung for,
+	// after what it shows of them changed their height
+	// (lyricRecenterFrames).
+	lyricRecenter int
+	// lyricRecenterMax is how far the lyrics scrolled when they began
+	// following the line sung, and lyricRowY where it showed: the lines
+	// placed at their new height change the one, then the other.
+	lyricRecenterMax float32
+	lyricRowY        float32
+	queueList        ui.ListState
+	queueAt          int // the row of the queue pane last scrolled to, -1 while it is hidden
+	comments         commentState
+	tabCount         rollState // the count on the comments' tab, as it rolls
 
 	fmMode        int    // the FM mode chosen, in fmModes
 	radioStarting string // the radio asked for its first songs, or ""
@@ -185,18 +198,19 @@ func (a *app) showMain() {
 // Run runs the app until it quits.
 func Run() error {
 	a := &app{
-		playlists:  map[int64]*netease.Playlist{},
-		loadingPl:  map[int64]bool{},
-		plErr:      map[int64]string{},
-		artists:    map[int64]*artistData{},
-		albums:     map[int64]*albumData{},
-		users:      map[int64]*userData{},
-		podcasts:   map[int64]*podcastData{},
-		podcastTab: &podcastTab{},
-		searches:   map[route]*searchData{},
-		lyricAt:    -1,
-		queueAt:    -1,
-		cacheUsed:  -1,
+		playlists:    map[int64]*netease.Playlist{},
+		loadingPl:    map[int64]bool{},
+		plErr:        map[int64]string{},
+		artists:      map[int64]*artistData{},
+		albums:       map[int64]*albumData{},
+		users:        map[int64]*userData{},
+		podcasts:     map[int64]*podcastData{},
+		podcastTab:   &podcastTab{},
+		searches:     map[route]*searchData{},
+		lyricAt:      -1,
+		lyricFocused: true,
+		queueAt:      -1,
+		cacheUsed:    -1,
 	}
 	moveOldData()
 	a.useUpdater()

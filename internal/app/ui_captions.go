@@ -63,6 +63,7 @@ func (a *app) captionsPane(c *ui.Context, tr *netease.Track, h float32) {
 	if a.lyricTrack != tr.ID {
 		a.lyricTrack, a.lyricAt = tr.ID, -2
 		a.lyricScroll, a.lyricGlide = ui.ScrollState{}, lyricGlide{}
+		a.lyricRecenter = 0
 	}
 	lag := a.lyricGlide.step(c, &a.lyricScroll)
 	scroll := ui.Scroll(c.Key("captions")).Grow(1).TrackScroll(&a.lyricScroll).Padding(0, 8, h*0.5, 0)

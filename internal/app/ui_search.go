@@ -26,6 +26,7 @@ var searchKinds = []struct {
 	{netease.SearchSongs, "单曲", "首单曲"},
 	{netease.SearchArtists, "歌手", "位歌手"},
 	{netease.SearchAlbums, "专辑", "张专辑"},
+	{netease.SearchPlaylists, "歌单", "个歌单"},
 	{netease.SearchUsers, "用户", "位用户"},
 	{netease.SearchPodcasts, "播客", "个播客"},
 }
@@ -143,6 +144,12 @@ func (a *app) searchPage(c *ui.Context) {
 			})
 		case netease.SearchAlbums:
 			a.albumGrid(c, res.Albums)
+		case netease.SearchPlaylists:
+			ui.Grid(c).Columns(a.columns(c, 156)).GapX(20).GapY(28).Children(func() {
+				for i := range res.Playlists {
+					a.foundPlaylistCard(c.Key(res.Playlists[i].ID), &res.Playlists[i])
+				}
+			})
 		case netease.SearchUsers:
 			for i := range res.Users {
 				a.userRow(c.Key(res.Users[i].UserID), &res.Users[i])
@@ -215,5 +222,18 @@ func (a *app) artistCard(c *ui.Context, ar *netease.ArtistProfile) {
 	})
 	if card.Clicked() {
 		a.open(route{page: pageArtist, id: ar.ID})
+	}
+}
+
+// foundPlaylistCard is a playlist a search found: its card, with how many
+// songs it has and who made it under its name, as strangers' playlists
+// are told apart by their makers.
+func (a *app) foundPlaylistCard(c *ui.Context, pl *netease.Playlist) {
+	sub := fmt.Sprintf("%d 首", pl.TrackCount)
+	if pl.Creator.Nickname != "" {
+		sub += " · " + pl.Creator.Nickname
+	}
+	if a.coverCard(c, pl.Name, pl.Cover(), pl.PlayCount, sub, func() { a.loadPlaylist(pl.ID, true) }) {
+		a.open(route{page: pagePlaylist, id: pl.ID})
 	}
 }

@@ -95,6 +95,9 @@ type app struct {
 
 	query       string
 	searchBox   ui.Handle
+	filter      string                // what the field over a page of songs holds
+	filtered    string                // the filter its rows were last narrowed by
+	filterBox   ui.Handle             // the field of the filter
 	searches    map[route]*searchData // the results of each search, by its page
 	searched    route                 // the search last shown, which the sidebar goes back to
 	suggestions suggestState          // what the search field's query may be after

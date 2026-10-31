@@ -82,9 +82,21 @@ func (a *app) shortcuts(c *ui.Context) {
 	c.OnShortcut(ui.Cmd, ui.KeyBracketLeft, a.back)
 	c.OnShortcut(ui.Cmd, ui.KeyBracketRight, a.goForward)
 	c.OnShortcut(ui.Cmd, ui.KeyF, func() {
+		if a.filterable() && !a.nowPlaying {
+			// The field sits over the songs it narrows, which are its
+			// header's: it comes back with them.
+			a.trackList.ScrollTo(0, ui.Start)
+			a.filterBox.Focus(c)
+			return
+		}
 		a.nowPlaying = false
 		a.searchBox.Focus(c)
 	})
+	// The field of a page of songs gives up what it holds as Escape clears
+	// it, and the page shows every song again.
+	if !a.nowPlaying && a.filterBox.Focused(c) && a.filter != "" {
+		c.OnShortcut(0, ui.KeyEscape, func() { a.filter = "" })
+	}
 	if a.nowPlaying {
 		c.OnShortcut(0, ui.KeyEscape, func() { a.nowPlaying = false })
 		// ⌘ and a number choose Now Playing's tab of that place.
@@ -345,6 +357,7 @@ func (a *app) content(c *ui.Context) {
 	// list, as a page's tabs in its header, opens it as the list builds.
 	if a.scrolled != a.route {
 		a.trackList, a.pageScroll, a.scrolled = ui.ListState{}, ui.ScrollState{}, a.route
+		a.filter = ""
 	}
 	// Pages mark where their content is, as they scroll.
 	a.underTop, a.underBottom = false, false

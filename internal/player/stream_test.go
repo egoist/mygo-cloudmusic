@@ -227,6 +227,35 @@ func TestStreamIntoCache(t *testing.T) {
 	}
 }
 
+// Audio downloads use the same configured NetEase proxy as the API.
+func TestStreamUsesNetEaseProxy(t *testing.T) {
+	t.Cleanup(func() { _, _ = netease.SetProxy("") })
+	content := []byte("audio")
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.String() != "http://m701.music.126.net/song.mp3" {
+			t.Errorf("proxy received %s", r.URL)
+		}
+		_, _ = w.Write(content)
+	}))
+	defer proxy.Close()
+	if _, err := netease.SetProxy(proxy.URL); err != nil {
+		t.Fatal(err)
+	}
+	dl := startDownload("http://m701.music.126.net/song.mp3", int64(len(content)), nil, nil)
+	defer dl.Close()
+	if n := dl.waitFor(int64(len(content))); n != int64(len(content)) {
+		t.Fatalf("downloaded %d bytes", n)
+	}
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+	if dl.err != nil {
+		t.Fatal(dl.err)
+	}
+	if string(dl.data) != string(content) {
+		t.Fatalf("downloaded %q", dl.data)
+	}
+}
+
 // A second stream of the song, as transcribing an episode opens, decodes
 // it as the one that plays does. Closing it leaves the download to the
 // one that plays, and the one that plays closing leaves it what is in.

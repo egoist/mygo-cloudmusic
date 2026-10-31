@@ -20,7 +20,7 @@ const apiBase = "https://music.163.com"
 
 const UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
-var httpClient = &http.Client{Timeout: 20 * time.Second}
+var httpClient = &http.Client{Transport: HTTPTransport, Timeout: 20 * time.Second}
 
 type Artist struct {
 	ID   int64  `json:"id"`

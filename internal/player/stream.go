@@ -18,6 +18,8 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
+var streamHTTPClient = &http.Client{Transport: netease.HTTPTransport}
+
 // A download fetches a song as it plays: readers wait for the bytes they
 // need, so playback starts with the first ones. The song comes into a file
 // of the cache, which keeps it once it has all come in, and is read from
@@ -97,7 +99,7 @@ func (d *download) run(ctx context.Context, url string) {
 		return
 	}
 	req.Header.Set("User-Agent", netease.UserAgent)
-	res, err := http.DefaultClient.Do(req)
+	res, err := streamHTTPClient.Do(req)
 	if err != nil {
 		finish(err)
 		return

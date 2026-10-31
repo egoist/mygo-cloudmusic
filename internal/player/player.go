@@ -51,16 +51,21 @@ type Player struct {
 	feeding  bool // the feed is asked
 	awaiting bool // at the queue's end, for what the feed gives
 
-	track   *netease.Track
-	out     *audio.Player
-	stream  stream
-	info    *netease.Stream // what the current track streams
-	fade    fader
-	gain    float64 // the current track's normalizing gain
-	loading bool
-	playing bool // what the listener wants: false while paused
-	err     string
-	gen     int // counts loads, to drop the results of stale ones
+	track     *netease.Track
+	out       *audio.Player
+	sequence  *sequence
+	partStart int64
+	polling   bool
+	stream    stream
+	info      *netease.Stream // what the current track streams
+	fade      fader
+	gain      float64 // the current track's normalizing gain
+	loading   bool
+	playing   bool // what the listener wants: false while paused
+	err       string
+	gen       int // counts loads, to drop the results of stale ones
+	loadJob   *trackLoad
+	nextJob   *trackLoad // the next song, opened and decoding while this one plays
 
 	lyrics       []lyrics.Line
 	lyricsLoaded bool
@@ -134,7 +139,7 @@ func (p *Player) announce(t *netease.Track, artwork []byte) {
 
 func (p *Player) ended() {
 	if p.repeat == RepeatOne {
-		p.out.Seek(0)
+		p.out.Seek(p.audioPosition(0))
 		p.out.Play()
 		return
 	}
@@ -202,6 +207,7 @@ func (p *Player) AttachRadio(name string, feed func(got func([]netease.Track))) 
 	p.endRadio()
 	p.radio, p.feed = name, feed
 	p.refill()
+	p.prepareNext()
 }
 
 // EndRadio stops the radio playing: the song playing plays on, but the
@@ -222,6 +228,7 @@ func (p *Player) EndRadio() {
 			p.order[i] = i
 		}
 	}
+	p.prepareNext()
 	if awaiting {
 		// At its end, waiting for more: nothing plays on.
 		p.playing = false
@@ -250,6 +257,7 @@ func (p *Player) refill() {
 		}
 		p.feeding = false
 		p.appendTracks(more)
+		p.prepareNext()
 		switch {
 		case !p.awaiting:
 		case p.at+1 < len(p.order):
@@ -310,9 +318,13 @@ func (p *Player) ToggleShuffle() {
 		}
 		p.at = cur
 	}
+	p.prepareNext()
 }
 
-func (p *Player) CycleRepeat() { p.repeat = (p.repeat + 1) % 3 }
+func (p *Player) CycleRepeat() {
+	p.repeat = (p.repeat + 1) % 3
+	p.prepareNext()
+}
 
 // Current returns the track playing or loading, or nil.
 func (p *Player) Current() *netease.Track { return p.track }
@@ -421,6 +433,9 @@ func (p *Player) Jump(i int) {
 
 // TogglePlay pauses, fading out, or plays, fading in.
 func (p *Player) TogglePlay() {
+	if !p.playing && p.sequence != nil {
+		p.pollAudio(p.sequence)
+	}
 	if p.out == nil {
 		switch {
 		case p.loading:
@@ -448,12 +463,15 @@ func (p *Player) TogglePlay() {
 	}
 	p.playing = true
 	if !p.seeking && !out.Playing() {
-		if out.Position() >= out.Duration()-time.Second {
-			out.Seek(0)
+		if p.Position() >= p.Duration()-time.Second {
+			out.Seek(p.audioPosition(0))
 		}
 		out.Play()
 	}
 	p.fade.fade(1, fadeIn, nil)
+	if p.sequence != nil {
+		p.pollAudio(p.sequence)
+	}
 	p.sync()
 }
 
@@ -471,10 +489,11 @@ func (p *Player) Seek(t time.Duration) {
 		return
 	}
 	out := p.out
+	absolute := p.audioPosition(t)
 	// Paused, it jumps at once; but a seek on its way paused it only for
 	// the jump, and this one takes its place, playing on from there.
 	if !out.Playing() && !p.seeking {
-		out.Seek(t)
+		out.Seek(absolute)
 		p.sync()
 		return
 	}
@@ -488,9 +507,12 @@ func (p *Player) Seek(t time.Duration) {
 				return
 			}
 			p.seeking = false
-			out.Seek(t)
+			out.Seek(absolute)
 			if p.playing || !p.fade.silent() {
 				out.Play()
+			}
+			if p.sequence != nil {
+				p.pollAudio(p.sequence)
 			}
 			p.sync()
 		})
@@ -507,10 +529,13 @@ func (p *Player) SetVolume(v float64) {
 // hears in powers, and the track's gain, if normalizing.
 func (p *Player) applyGain() {
 	g := p.volume * p.volume
-	if p.Normalize != nil && p.Normalize() {
+	if p.sequence == nil && p.Normalize != nil && p.Normalize() {
 		g *= p.gain
 	}
 	p.fade.setGain(g)
+	if p.sequence != nil {
+		p.sequence.setNormalize(p.Normalize != nil && p.Normalize())
+	}
 }
 
 // normPreamp lifts normalized tracks, which NetEase brings to the quiet
@@ -537,7 +562,7 @@ func (p *Player) Position() time.Duration {
 	case p.seeking:
 		return p.seekTo
 	}
-	return p.out.Position()
+	return max(0, p.out.Position()-p.audioPosition(0))
 }
 
 func (p *Player) Duration() time.Duration {
@@ -558,6 +583,19 @@ func (p *Player) Levels() ([Bands]float32, bool) {
 }
 
 func (p *Player) stop() {
+	if p.sequence != nil {
+		if p.nextJob != nil && p.nextJob.pcm != nil && p.sequence.started(p.nextJob.pcm) {
+			p.nextJob.close()
+			p.nextJob = nil
+		}
+		p.sequence.Close()
+		p.sequence = nil
+	}
+	p.partStart, p.polling = 0, false
+	if p.loadJob != nil {
+		p.loadJob.close()
+		p.loadJob = nil
+	}
 	if out := p.out; out != nil {
 		// Paused first, it fades out over a few milliseconds, rather than
 		// stopping with a click.
@@ -590,8 +628,17 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.announce(&t, nil)
 	p.refill()
 
+	p.loadMetadata(t, gen)
+	p.loadAudio(t, at, skipped)
+}
+
+var fetchArtwork = netease.Fetch
+var fetchLyrics = netease.Lyrics
+
+func (p *Player) loadMetadata(t netease.Track, gen int) {
+	artwork, lyricsFor := fetchArtwork, fetchLyrics
 	go func() {
-		cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600))
+		cover, err := artwork(netease.Sized(t.Album.PicURL, 600))
 		if err == nil {
 			p.post(func() {
 				if gen == p.gen {
@@ -602,7 +649,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	}()
 
 	go func() {
-		lrc, trans, yrc, err := netease.Lyrics(t.ID)
+		lrc, trans, yrc, err := lyricsFor(t.ID)
 		var lines []lyrics.Line
 		if err == nil {
 			lines = lyrics.Build(lrc, trans, yrc)
@@ -614,70 +661,76 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			}
 		})
 	}()
-	go func() {
-		level := "exhigh"
-		if p.Quality != nil {
-			level = p.Quality()
-		}
-		info, s, err := p.open(t, level)
-		p.post(func() {
-			if gen != p.gen {
-				if s != nil {
-					s.Close()
-				}
-				return
-			}
-			p.loading = false
-			if err != nil {
-				p.err = err.Error()
-				switch {
-				case err != netease.ErrUnavailable:
-				case t.ProgramID != 0:
+}
+
+// loadAudio takes the prepared next song, even if it is still loading.
+func (p *Player) loadAudio(t netease.Track, at, skipped int) {
+	job := p.takeNext(t, p.quality())
+	p.loadJob = job
+	job.use(func() {
+		p.loadJob = nil
+		p.loading = false
+		if job.err != nil {
+			p.err = job.err.Error()
+			if job.err == netease.ErrUnavailable {
+				if t.ProgramID != 0 {
 					p.err = "这期节目需要购买才能收听"
-				default:
+				} else {
 					p.err = "这首歌需要 VIP 才能播放"
 				}
-				// Skip what cannot play, unless nothing in the queue can.
-				if skipped+1 < len(p.order) {
-					next := at + 1
-					if next >= len(p.order) {
-						next = 0
-					}
-					p.loadSkipping(next, skipped+1, p.playing, 0)
-				} else {
-					p.playing = false
-					p.sync()
+			}
+			// Skip what cannot play, unless nothing in the queue can.
+			if skipped+1 < len(p.order) {
+				next := at + 1
+				if next >= len(p.order) {
+					next = 0
 				}
-				return
+				p.loadSkipping(next, skipped+1, p.playing, 0)
+			} else {
+				p.playing = false
+				p.sync()
 			}
-			p.stream, p.info = s, info
-			p.gain = normGain(info)
-			p.out = audio.NewPlayer(s)
-			// From its middle, as a session picked up again, it fades in.
-			level := 1.0
-			if p.pending > 0 {
-				level = 0
-			}
-			p.fade.attach(p.out, level)
-			p.applyGain()
-			p.out.OnEnd(func() {
-				p.post(func() {
-					if gen == p.gen {
-						p.ended()
-					}
-				})
+			return
+		}
+		p.stream, p.info = job.stream, job.info
+		var seq *sequence
+		seq = newSequence(job.pcm, func() {
+			p.post(func() {
+				if p.sequence == seq {
+					p.pollAudio(seq)
+				}
 			})
-			if p.pending > 0 {
-				p.out.Seek(p.pending)
-				p.pending = 0
-			}
-			if p.playing {
-				p.out.Play()
-				p.fade.fade(1, fadeIn, nil)
-			}
-			p.sync()
 		})
-	}()
+		p.sequence = seq
+		seq.setNormalize(p.Normalize != nil && p.Normalize())
+		p.out = audio.NewPlayer(seq)
+		job.close()
+		p.gain = normGain(job.info)
+		// From its middle, as a session picked up again, it fades in.
+		level := 1.0
+		if p.pending > 0 {
+			level = 0
+		}
+		p.fade.attach(p.out, level)
+		p.applyGain()
+		p.out.OnEnd(func() {
+			p.post(func() {
+				if p.sequence == seq {
+					p.pollAudio(seq)
+				}
+			})
+		})
+		if p.pending > 0 {
+			p.out.Seek(p.audioPosition(p.pending))
+			p.pending = 0
+		}
+		if p.playing {
+			p.out.Play()
+			p.fade.fade(1, fadeIn, nil)
+		}
+		p.sync()
+		p.prepareNext()
+	})
 }
 
 // open opens track t's audio at level: kept in the cache, or else

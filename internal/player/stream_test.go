@@ -71,20 +71,7 @@ func TestMP3SeekIsClean(t *testing.T) {
 			t.Fatal(err)
 		}
 		n, _ := s.Read(buf)
-		// Where the decoder started, counted in MP3 frames from the first,
-		// and what it played from there on.
-		var at int64
-		if from := frame - preroll; from > 0 {
-			off := s.start + int64(float64(dl.size-s.start)*float64(from)/float64(s.frames))
-			off = findFrame(dl, off)
-			k := int64(0)
-			for p := s.start; p < off; p += int64(frameSize(dl.peek(p, 4))) {
-				k++
-			}
-			at = (k*1152 + preroll) * 2
-		} else {
-			at = frame * 2
-		}
+		at := frame * 2
 		if d := maxDiff(buf[:n], ref[at:]); d > 1e-4 {
 			t.Errorf("seek to frame %d: off by up to %.3f", frame, d)
 		}
@@ -224,6 +211,40 @@ func TestStreamIntoCache(t *testing.T) {
 	}
 	if _, _, ok := c.lookup(2, "exhigh"); ok {
 		t.Error("kept a song cut short")
+	}
+}
+
+// This five-second LAME fixture used to include its metadata frame,
+// encoder delay and tail padding, adding audible silence at each transition.
+func TestMP3GaplessLengthAndRestart(t *testing.T) {
+	b, err := os.ReadFile("testdata/seek.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := openMP3Stream(downloaded(b), 600000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.Len() != 5*44100 {
+		t.Fatalf("audible length %d, want 220500", s.Len())
+	}
+	ref := decodeAll(t, b)
+	if len(ref) != 5*44100*2 {
+		t.Fatalf("decoded %d samples, want 441000", len(ref))
+	}
+	buf := make([]float32, 4096)
+	for _, frame := range []int64{0, 1, 220000, 0} {
+		if err := s.SetPosition(frame); err != nil {
+			t.Fatal(err)
+		}
+		n, _ := s.Read(buf)
+		if n != min(len(buf), len(ref)-int(frame*2)) {
+			t.Fatalf("frame %d: %d samples", frame, n)
+		}
+		if d := maxDiff(buf[:n], ref[frame*2:]); d > 1e-4 {
+			t.Fatalf("frame %d differs by %g", frame, d)
+		}
 	}
 }
 

@@ -359,28 +359,37 @@ func openShared(dl *download, durationMs int64) (stream, error) {
 // are encoded at a constant bit rate, so time and bytes are in proportion.
 // It also measures the spectrum of what it decodes, for the visualizers.
 type mp3Stream struct {
-	dl      *download
-	dec     *gomp3.Decoder
-	rate    int
-	frames  int64 // the song's length in frames, from its duration
-	start   int64 // the first audio frame's byte, after the ID3 tag
-	pos     int64 // the frame decoded next
-	skip    int   // bytes of decoded audio to drop after a seek
-	buf     []byte
-	spec    *spectrum
-	drop    func() // lets the download go, as the stream closes
-	closeMu sync.Once
+	dl                    *download
+	dec                   *gomp3.Decoder
+	rate                  int
+	frames                int64 // the song's length in frames, from its duration
+	start                 int64 // the first audio frame's byte, after the ID3 tag
+	pos                   int64 // the frame decoded next
+	skip                  int   // bytes of decoded audio to drop after a seek
+	buf                   []byte
+	spec                  *spectrum
+	drop                  func()
+	closeMu               sync.Once
+	trim                  bool
+	lead, samplesPerFrame int64
+	offsets               []int64
 }
 
 func openMP3Stream(dl *download, durationMs int64) (*mp3Stream, error) {
-	s := &mp3Stream{dl: dl, drop: dl.Close}
-	dec, err := gomp3.NewDecoder(&downloadReader{d: dl})
+	s := &mp3Stream{dl: dl, start: id3Size(dl), drop: dl.Close}
+	audioStart, lead, length, spf, trim := mp3Gapless(dl, s.start)
+	if trim {
+		s.start, s.lead, s.frames, s.samplesPerFrame, s.trim = audioStart, lead, length, spf, true
+		s.skip = int(lead) * 4
+	}
+	dec, err := gomp3.NewDecoder(&downloadReader{d: dl, pos: s.start})
 	if err != nil {
 		return nil, err
 	}
 	s.dec, s.rate = dec, dec.SampleRate()
-	s.frames = durationMs * int64(s.rate) / 1000
-	s.start = id3Size(dl)
+	if !trim {
+		s.frames = durationMs * int64(s.rate) / 1000
+	}
 	s.spec = newSpectrum(s.rate, s.frames)
 	return s, nil
 }
@@ -401,7 +410,16 @@ func (s *mp3Stream) Channels() int   { return 2 }
 func (s *mp3Stream) Len() int64      { return s.frames }
 
 func (s *mp3Stream) Read(dst []float32) (int, error) {
+	if s.trim {
+		if s.pos >= s.frames {
+			return 0, io.EOF
+		}
+		dst = dst[:min(int64(len(dst)), (s.frames-s.pos)*2)]
+	}
 	n := len(dst) / 2 * 4
+	if n == 0 {
+		return 0, nil
+	}
 	if cap(s.buf) < n {
 		s.buf = make([]byte, n)
 	}
@@ -439,6 +457,19 @@ func (s *mp3Stream) Read(dst []float32) (int, error) {
 const preroll = 4 * 1152
 
 func (s *mp3Stream) SetPosition(frame int64) error {
+	if s.trim {
+		frame = min(max(frame, 0), s.frames)
+		off, skip, err := s.taggedPosition(frame)
+		if err != nil {
+			return err
+		}
+		dec, err := gomp3.NewDecoder(&downloadReader{d: s.dl, pos: off})
+		if err != nil {
+			return err
+		}
+		s.dec, s.pos, s.skip = dec, frame, skip
+		return nil
+	}
 	var off int64
 	if from := frame - preroll; from > 0 && s.frames > 0 {
 		size := s.dl.size

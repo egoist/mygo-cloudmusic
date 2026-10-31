@@ -8,6 +8,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
+	"slices"
 	"time"
 	"weak"
 
@@ -26,15 +27,16 @@ type artwork struct {
 	tint     ui.Color // the cover's most vivid color
 	failed   bool
 	used     time.Time // when it was last asked for
+	size     int       // the bytes it keeps: its data, and the backdrop's pixels
 }
 
-// artCache loads covers on goroutines and keeps them while they show, and
-// for a while after: their pixels on the GPU, and on the CPU only their
-// data, which takes a fraction of the pixels. Its methods run on the main
-// thread; post runs a function there.
+// artCache loads covers on goroutines and keeps them, up to artLimit
+// bytes: their pixels on the GPU while they show, and on the CPU only
+// their data, which takes a fraction of the pixels. Its methods run on
+// the main thread; post runs a function there.
 type artCache struct {
 	art map[string]*artwork
-	// gone are the covers swept, for as long as something else holds
+	// gone are the covers dropped, for as long as something else holds
 	// them: Now Playing keeps the cover it shows, which comes back as it
 	// was rather than loading again.
 	gone  map[string]weak.Pointer[artwork]
@@ -42,37 +44,47 @@ type artCache struct {
 	sem   chan struct{}
 	post  func(func())
 	now   func() time.Time
-	swept time.Time
-	asked time.Time // when a cover was last asked for
+	size  int // the bytes the covers in art keep
+	limit int
 }
 
-// artKeep is how long a cover not asked for stays: the pages scrolled
-// through over a session show thousands.
-const artKeep = 5 * time.Minute
+// artLimit is how many bytes of covers the cache keeps. A cover keeps its
+// data, some 50–100 KB for Now Playing's and a few for a row's, so this
+// is thousands: going back to a page shows its covers as they were,
+// however long ago it showed them, rather than loading them again.
+const artLimit = 64 << 20
 
 func newArtCache(post func(func())) *artCache {
-	return &artCache{art: map[string]*artwork{}, gone: map[string]weak.Pointer[artwork]{}, busy: map[string]bool{}, sem: make(chan struct{}, 8), post: post, now: time.Now, swept: time.Now()}
+	return &artCache{art: map[string]*artwork{}, gone: map[string]weak.Pointer[artwork]{}, busy: map[string]bool{}, sem: make(chan struct{}, 8), post: post, now: time.Now, limit: artLimit}
 }
 
-// sweep drops the covers not asked for in artKeep before the last one
-// was, once a minute. The time the window draws nothing, idle or in the
-// background, doesn't count: the first frame after it would drop every
-// cover it shows, and they would flash as they load again.
-func (c *artCache) sweep(now time.Time) {
-	if now.Sub(c.swept) < time.Minute {
+// add keeps a cover, and drops those asked for least recently once the
+// covers take more than the limit, down to three quarters of it, so that
+// it sorts them seldom. Those showing were asked for last, and stay.
+func (c *artCache) add(key string, a *artwork) {
+	c.art[key] = a
+	c.size += a.size
+	if c.size <= c.limit {
 		return
 	}
-	c.swept = now
 	for key, p := range c.gone {
 		if p.Value() == nil {
 			delete(c.gone, key)
 		}
 	}
-	for key, a := range c.art {
-		if c.asked.Sub(a.used) > artKeep {
-			delete(c.art, key)
-			c.gone[key] = weak.Make(a)
+	keys := make([]string, 0, len(c.art))
+	for key := range c.art {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(x, y string) int { return c.art[x].used.Compare(c.art[y].used) })
+	for _, key := range keys {
+		if c.size <= c.limit*3/4 {
+			break
 		}
+		a := c.art[key]
+		delete(c.art, key)
+		c.size -= a.size
+		c.gone[key] = weak.Make(a)
 	}
 }
 
@@ -86,8 +98,6 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 		key += "#backdrop"
 	}
 	now := c.now()
-	c.sweep(now)
-	c.asked = now
 	if a, ok := c.art[key]; ok {
 		a.used = now
 		return a
@@ -95,7 +105,7 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 	if a := c.gone[key].Value(); a != nil {
 		delete(c.gone, key)
 		a.used = now
-		c.art[key] = a
+		c.add(key, a)
 		return a
 	}
 	if c.busy[key] {
@@ -104,7 +114,7 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 	c.busy[key] = true
 	go func() {
 		c.sem <- struct{}{}
-		bmp, img, err := loadArt(url)
+		bmp, img, size, err := loadArt(url)
 		<-c.sem
 		var blurred *image.RGBA
 		var tint ui.Color
@@ -117,14 +127,15 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 		c.post(func() {
 			delete(c.busy, key)
 			if err != nil {
-				c.art[key] = &artwork{failed: true, used: c.now()}
+				c.add(key, &artwork{failed: true, used: c.now()})
 				return
 			}
-			a := &artwork{bmp: bmp, tint: tint, used: c.now()}
+			a := &artwork{bmp: bmp, tint: tint, used: c.now(), size: size}
 			if blurred != nil {
 				a.backdrop = ui.NewBitmap(blurred)
+				a.size += len(blurred.Pix)
 			}
-			c.art[key] = a
+			c.add(key, a)
 			// Shown by the frame post draws, the cover drops its pixels,
 			// which its data decodes again if they are needed.
 			time.AfterFunc(artRelease, func() { mygo.RunOnMain(bmp.ReleasePixels) })
@@ -138,13 +149,14 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 const artRelease = 2 * time.Second
 
 // loadArt fetches the cover at url, as a bitmap to draw and an image to
-// measure.
-func loadArt(url string) (*ui.Bitmap, image.Image, error) {
+// measure, with the bytes of its data.
+func loadArt(url string) (*ui.Bitmap, image.Image, int, error) {
 	b, err := netease.Fetch(url)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
-	return decodeArt(b)
+	bmp, img, err := decodeArt(b)
+	return bmp, img, len(b), err
 }
 
 // decodeArt decodes a cover twice: as a bitmap, which keeps the data to

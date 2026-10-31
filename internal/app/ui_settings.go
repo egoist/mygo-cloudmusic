@@ -2,6 +2,7 @@ package app
 
 import (
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -17,6 +18,7 @@ func (a *app) openSettings() {
 		return
 	}
 	a.measureCache()
+	go systemFonts() // list the fonts while the window opens, not in its first frame
 	a.settingsWin = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "设置",
 		Width:           560,
@@ -51,6 +53,7 @@ func (a *app) changed() {
 
 func (a *app) settingsView(c *ui.Context) {
 	t := *c.Theme()
+	a.settings.applyFont(&t)
 	p := paletteFor(&t)
 	t.Accent, t.AccentText = p.accent, p.onAccent
 	c.SetTheme(&t)
@@ -196,6 +199,27 @@ func (a *app) settingsView(c *ui.Context) {
 				}
 				if segmented(c.Key("appearance"), &i, "跟随系统", "浅色", "深色") {
 					s.Appearance = modes[i]
+					a.changed()
+				}
+			})
+			row("字体", "选择已安装的字体，留空使用系统默认字体", func() {
+				names := systemFonts()
+				labels := make([]string, 0, len(names)+1)
+				labels = append(labels, "系统默认")
+				labels = append(labels, names...)
+				chosen := s.Font
+				if chosen == "" {
+					chosen = "系统默认"
+				} else if !slices.Contains(names, chosen) {
+					// A saved font no longer installed stays chosen.
+					labels = append(labels, chosen)
+				}
+				if ui.Select(c.Key("font"), &chosen, labels).Label("字体").Width(180).Changed() {
+					if chosen == "系统默认" {
+						s.Font = ""
+					} else {
+						s.Font = chosen
+					}
 					a.changed()
 				}
 			})

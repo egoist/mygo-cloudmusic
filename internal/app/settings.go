@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 )
 
 // settings are the listener's choices, kept in settings.json in the user
@@ -28,6 +30,8 @@ type settings struct {
 	Quality string `json:"quality"`
 	// Appearance is light, dark, or system to follow the system.
 	Appearance string `json:"appearance"`
+	// Font is the installed font family to use; empty means the system default.
+	Font string `json:"font,omitempty"`
 	// Smoke makes the progress bars comets trailing smoke as music plays,
 	// for a few percent of a core: the listener turns it on.
 	Smoke bool `json:"smoke"`
@@ -155,6 +159,10 @@ func (s settings) applyAppearance() {
 	default:
 		mygo.Theme.SetSource(mygo.ThemeSystem)
 	}
+}
+
+func (s settings) applyFont(t *ui.Theme) {
+	t.Font = strings.TrimSpace(s.Font)
 }
 
 // qualityLevel is the stream level NetEase names a quality by.

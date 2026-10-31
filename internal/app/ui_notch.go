@@ -337,6 +337,9 @@ func shape(cx, w, h, flare, foot float32) *ui.Path {
 
 func (n *notch) view(c *ui.Context) {
 	a := n.a
+	t := *c.Theme()
+	a.settings.applyFont(&t)
+	c.SetTheme(&t)
 	pl := a.pl
 	tr := pl.Current()
 	c.Root().Background(ui.Transparent)

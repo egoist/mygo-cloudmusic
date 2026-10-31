@@ -20,6 +20,7 @@ var (
 	addToPlaylist      = netease.AddToPlaylist
 	removeFromPlaylist = netease.RemoveFromPlaylist
 	deletePlaylist     = netease.DeletePlaylist
+	savePlaylist       = netease.SubscribePlaylist
 )
 
 // nameDialog asks for a playlist's name: a new one's, or one's new name.
@@ -47,6 +48,79 @@ func (a *app) editable(id int64) *netease.Playlist {
 		}
 	}
 	return nil
+}
+
+// isSaved reports whether the listener saved playlist pl, as its page or
+// the sidebar says.
+func (a *app) isSaved(pl *netease.Playlist) bool {
+	return pl.Subscribed || slices.ContainsFunc(a.saved, func(s netease.Playlist) bool { return s.ID == pl.ID })
+}
+
+// savable reports whether the listener may save playlist pl: anyone's but
+// their own. Signed out, saving asks them to sign in.
+func (a *app) savable(pl *netease.Playlist) bool {
+	return a.profile == nil || pl.Creator.UserID != a.profile.UserID
+}
+
+// toggleSaved saves playlist pl for the listener, or unsaves it, at once
+// in the app and then with NetEase, going back if NetEase refuses. Signed
+// out, it asks the listener to sign in.
+func (a *app) toggleSaved(pl netease.Playlist) {
+	if a.profile == nil {
+		a.showMain()
+		a.openLogin()
+		return
+	}
+	id := pl.ID
+	if a.savingPl[id] {
+		return
+	}
+	if a.savingPl == nil {
+		a.savingPl = map[int64]bool{}
+	}
+	a.savingPl[id] = true
+	save := !a.isSaved(&pl)
+	at := a.setSaved(pl, save, 0)
+	uid := a.profile.UserID
+	go func() {
+		err := savePlaylist(id, save)
+		a.post(func() {
+			delete(a.savingPl, id)
+			switch {
+			case a.profile == nil || a.profile.UserID != uid:
+				// Signed out or in as someone else meanwhile.
+			case err != nil:
+				a.setSaved(pl, !save, max(at, 0))
+				a.toast = "操作失败，请稍后再试"
+			case save:
+				a.toast = "已收藏"
+			default:
+				a.toast = "已取消收藏"
+			}
+		})
+	}()
+}
+
+// setSaved marks playlist pl saved or not, on its page and in the sidebar,
+// where a saved one goes at index at, and returns where it was there, or
+// -1.
+func (a *app) setSaved(pl netease.Playlist, save bool, at int) int {
+	if loaded := a.playlists[pl.ID]; loaded != nil {
+		loaded.Subscribed = save
+	}
+	// A new slice, not shifting the one the sidebar may be listing.
+	saved := slices.Clone(a.saved)
+	was := slices.IndexFunc(saved, func(s netease.Playlist) bool { return s.ID == pl.ID })
+	if was >= 0 {
+		saved = slices.Delete(saved, was, was+1)
+	}
+	if save {
+		pl.Subscribed = true
+		pl.Tracks, pl.TrackIDs = nil, nil
+		saved = slices.Insert(saved, min(at, len(saved)), pl)
+	}
+	a.saved = saved
+	return was
 }
 
 // loadMine loads the playlists the listener uid made and saved.

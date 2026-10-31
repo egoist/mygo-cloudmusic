@@ -87,3 +87,22 @@ const subPage = 100
 func subQuery(offset int) url.Values {
 	return url.Values{"limit": {strconv.Itoa(subPage)}, "offset": {strconv.Itoa(offset)}, "total": {"true"}}
 }
+
+// SubscribePlaylist saves a playlist for the listener, or unsaves it.
+func SubscribePlaylist(id int64, subscribe bool) error {
+	path := "/api/playlist/unsubscribe"
+	if subscribe {
+		path = "/api/playlist/subscribe"
+	}
+	var res struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := eapiPost(path, map[string]any{"id": strconv.FormatInt(id, 10)}, &res); err != nil {
+		return err
+	}
+	if res.Code != 200 {
+		return fmt.Errorf("netease: %s: code %d %s", path, res.Code, res.Message)
+	}
+	return nil
+}

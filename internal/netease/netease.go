@@ -127,6 +127,7 @@ type Playlist struct {
 	UpdateFreq  string  `json:"updateFrequency"`
 	SpecialType int     `json:"specialType"` // 5: the listener's liked songs
 	Privacy     int     `json:"privacy"`     // 10: only its creator sees it
+	Subscribed  bool    `json:"subscribed"`  // the listener saved it
 	Creator     struct {
 		UserID   int64  `json:"userId"`
 		Nickname string `json:"nickname"`

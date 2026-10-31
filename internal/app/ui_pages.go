@@ -331,10 +331,74 @@ func (a *app) playlistHeader(c *ui.Context, pl *netease.Playlist) {
 	})
 }
 
+// filterable reports whether the page lists songs, which its field narrows.
+func (a *app) filterable() bool {
+	switch a.route.page {
+	case pagePlaylist, pageAlbum:
+		return true
+	}
+	return false
+}
+
+// filterField is the field under the header of a page of songs, which
+// narrows its list to the songs it finds as it is typed, as the field of the
+// sidebar searches all of NetEase.
+func (a *app) filterField(c *ui.Context) {
+	p := a.pal
+	box := ui.Row(c).Width(210).Height(28).PaddingX(9).Gap(6).Radius(8).AlignItems(ui.Center)
+	if a.filterBox.Focused(c) {
+		box.Background(p.bg).Border(1, p.accent.Alpha(0.6)).Shadow(0, 0, 0, 3, p.accent.Alpha(0.25))
+	} else {
+		box.Background(p.hover).Border(1, p.hairline)
+	}
+	box.OnClick(func() { a.filterBox.Focus(c) })
+	box.Children(func() {
+		ui.Icon(c, iconSearch).Size(13, 13).TextColor(p.muted)
+		ui.TextInputBase(c.Key("filter"), &a.filter).Bind(&a.filterBox).Grow(1).MinWidth(0).
+			Placeholder("搜索歌名、专辑或歌手").Label("搜索歌单").FontSize(12.5)
+		if a.filter != "" {
+			iconButton(c.Key("clear-filter"), iconX, 11, p.muted, "清除搜索").KeepFocus().OnClick(func() { a.filter = "" })
+		}
+	})
+}
+
+// filterTracks returns the tracks that hold every word, in their name, their
+// album's, their aliases' or their artists': what the field over a page of
+// songs finds, whatever the case.
+func filterTracks(tracks []netease.Track, words []string) []netease.Track {
+	var kept []netease.Track
+	for _, tr := range tracks {
+		hay := strings.ToLower(tr.Name + " " + strings.Join(tr.Alias, " ") + " " + tr.Album.Name + " " + tr.ArtistNames())
+		found := true
+		for _, w := range words {
+			if !strings.Contains(hay, w) {
+				found = false
+				break
+			}
+		}
+		if found {
+			kept = append(kept, tr)
+		}
+	}
+	return kept
+}
+
 // trackRows lists tracks under a header, which scrolls with them; a click
 // plays the list from the track clicked.
 func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, header func(c *ui.Context), footer ...func(c *ui.Context)) {
 	p := a.pal
+	// The page's field narrows the rows to the songs it finds, from the top
+	// of the list: the songs gone from the filter have gone from the list.
+	if a.filter != a.filtered {
+		a.filtered = a.filter
+		a.trackList.ScrollTo(0, ui.Start)
+	}
+	if words := strings.Fields(strings.ToLower(a.filter)); len(words) > 0 {
+		tracks = filterTracks(tracks, words)
+		if len(tracks) == 0 {
+			footer = append([]func(c *ui.Context){func(c *ui.Context) { a.empty(c, "没有找到匹配的歌曲") }}, footer...)
+		}
+	}
 	cur := a.pl.Current()
 	// A song's menu can take it out of the playlist it is listed in.
 	var pid int64
@@ -354,6 +418,11 @@ func (a *app) trackRows(c *ui.Context, tracks []netease.Track, covers bool, head
 			ui.Column(c).Children(func() {
 				a.startMark(c)
 				header(c)
+				// The field of the page narrows the songs under it, where
+				// the header ends and the list starts.
+				if a.filterable() {
+					ui.Row(c).Justify(ui.End).Margin(0, 0, 16, 0).Children(func() { a.filterField(c) })
+				}
 			})
 			return
 		}

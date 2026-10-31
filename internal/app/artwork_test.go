@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -59,4 +60,27 @@ func TestArtCacheKeepsCoversWhileIdle(t *testing.T) {
 	if c.get("shown", false) == nil {
 		t.Error("dropped the covers showing after 10 minutes idle")
 	}
+}
+
+// A cover swept while something still holds it comes back as it was. It
+// loaded again: Now Playing's cover went after 5 minutes on other pages,
+// though Now Playing still held it, and flashed in once it opened again.
+func TestArtCacheKeepsHeldCovers(t *testing.T) {
+	now := time.Unix(1e9, 0)
+	c := newArtCache(func(func()) {})
+	c.now, c.swept = func() time.Time { return now }, now
+	held := &artwork{used: now}
+	c.art["now playing"] = held
+	c.art["other"] = &artwork{used: now}
+	for range 7 {
+		now = now.Add(time.Minute)
+		c.get("other", false)
+	}
+	if _, ok := c.art["now playing"]; ok {
+		t.Fatal("kept a cover not asked for in 7 minutes")
+	}
+	if got := c.get("now playing", false); got != held {
+		t.Error("loaded again a cover something still held")
+	}
+	runtime.KeepAlive(held)
 }

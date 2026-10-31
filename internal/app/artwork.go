@@ -9,6 +9,7 @@ import (
 	_ "image/png"
 	"math"
 	"time"
+	"weak"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -32,7 +33,11 @@ type artwork struct {
 // data, which takes a fraction of the pixels. Its methods run on the main
 // thread; post runs a function there.
 type artCache struct {
-	art   map[string]*artwork
+	art map[string]*artwork
+	// gone are the covers swept, for as long as something else holds
+	// them: Now Playing keeps the cover it shows, which comes back as it
+	// was rather than loading again.
+	gone  map[string]weak.Pointer[artwork]
 	busy  map[string]bool
 	sem   chan struct{}
 	post  func(func())
@@ -46,7 +51,7 @@ type artCache struct {
 const artKeep = 5 * time.Minute
 
 func newArtCache(post func(func())) *artCache {
-	return &artCache{art: map[string]*artwork{}, busy: map[string]bool{}, sem: make(chan struct{}, 8), post: post, now: time.Now, swept: time.Now()}
+	return &artCache{art: map[string]*artwork{}, gone: map[string]weak.Pointer[artwork]{}, busy: map[string]bool{}, sem: make(chan struct{}, 8), post: post, now: time.Now, swept: time.Now()}
 }
 
 // sweep drops the covers not asked for in artKeep before the last one
@@ -58,9 +63,15 @@ func (c *artCache) sweep(now time.Time) {
 		return
 	}
 	c.swept = now
+	for key, p := range c.gone {
+		if p.Value() == nil {
+			delete(c.gone, key)
+		}
+	}
 	for key, a := range c.art {
 		if c.asked.Sub(a.used) > artKeep {
 			delete(c.art, key)
+			c.gone[key] = weak.Make(a)
 		}
 	}
 }
@@ -79,6 +90,12 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 	c.asked = now
 	if a, ok := c.art[key]; ok {
 		a.used = now
+		return a
+	}
+	if a := c.gone[key].Value(); a != nil {
+		delete(c.gone, key)
+		a.used = now
+		c.art[key] = a
 		return a
 	}
 	if c.busy[key] {

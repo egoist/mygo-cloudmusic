@@ -168,7 +168,7 @@ func TestSearchPageLive(t *testing.T) {
 		t.Skip()
 	}
 	deviceOnce.Do(func() { deviceID = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123" })
-	for _, kind := range []SearchType{SearchSongs, SearchAlbums, SearchArtists, SearchUsers, SearchPodcasts} {
+	for _, kind := range []SearchType{SearchSongs, SearchAlbums, SearchArtists, SearchPlaylists, SearchUsers, SearchPodcasts} {
 		res, err := SearchPage("音乐", kind, 5, 0)
 		if err != nil || res.Len() == 0 || res.Total < res.Len() {
 			t.Fatalf("kind %d: %d of %d, %v", kind, res.Len(), res.Total, err)

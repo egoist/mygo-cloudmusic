@@ -178,10 +178,7 @@ func Logout() {
 // first, and those they saved.
 func UserPlaylists(uid int64) (made, saved []Playlist, err error) {
 	var res struct {
-		Playlist []struct {
-			Playlist
-			Subscribed bool `json:"subscribed"`
-		} `json:"playlist"`
+		Playlist []Playlist `json:"playlist"`
 	}
 	q := url.Values{"uid": {strconv.FormatInt(uid, 10)}, "limit": {"200"}, "offset": {"0"}}
 	if err := get("/api/user/playlist", q, &res); err != nil {
@@ -189,9 +186,9 @@ func UserPlaylists(uid int64) (made, saved []Playlist, err error) {
 	}
 	for _, p := range res.Playlist {
 		if p.Subscribed {
-			saved = append(saved, p.Playlist)
+			saved = append(saved, p)
 		} else {
-			made = append(made, p.Playlist)
+			made = append(made, p)
 		}
 	}
 	return made, saved, nil

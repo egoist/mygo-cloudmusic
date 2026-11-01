@@ -1,0 +1,43 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "website",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--cwd",
+        "website",
+        "dev"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "website-3001",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--cwd",
+        "website",
+        "vite",
+        "dev",
+        "--port",
+        "3001",
+        "--strictPort"
+      ],
+      "port": 3001
+    },
+    {
+      "name": "website-dist",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "3010",
+        "-d",
+        "website/dist/client"
+      ],
+      "port": 3010
+    }
+  ]
+}

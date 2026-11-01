@@ -105,6 +105,36 @@ func TestSearchKindFromSongs(t *testing.T) {
 	}
 }
 
+// The 歌单 tab searches playlists, and a playlist it found opens its page.
+func TestSearchPlaylists(t *testing.T) {
+	asked := fakeSearch(t)
+	a := catalogApp()
+	a.open(route{page: pageSearch, query: "MyGO", kind: netease.SearchSongs})
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	if err := tt.Click("歌单"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if got := wait(t, asked, "the playlists"); got != (searchRequest{"MyGO", netease.SearchPlaylists, 0}) {
+		t.Fatalf("searched %+v", got)
+	}
+
+	a.searches[a.route] = &searchData{
+		res:  netease.SearchResult{Playlists: []netease.Playlist{{ID: 42, Name: "迷途人偶", TrackCount: 52}}, Total: 1},
+		page: paged{loaded: true},
+	}
+	a.playlists[42] = &netease.Playlist{ID: 42, Name: "迷途人偶"} // so its page loads nothing
+	tt.Frame()
+	if err := tt.Click("迷途人偶"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.route != (route{page: pagePlaylist, id: 42}) {
+		t.Errorf("clicked through to %+v", a.route)
+	}
+}
+
 // A search's next page loads once its foot comes into view, from where the
 // last ended, and a search done again loads from its start.
 func TestSearchLoadsMore(t *testing.T) {

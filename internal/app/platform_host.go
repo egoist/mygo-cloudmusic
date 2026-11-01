@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -83,10 +84,6 @@ func (h platformHost) Navigate(r appplatform.Route) {
 		return
 	}
 	home.Open(r)
-	h.a.trackList = ui.ListState{}
-	h.a.platformCardList = ui.ListState{}
-	h.a.pageScroll = ui.ScrollState{}
-	h.a.underTop, h.a.underBottom = false, false
 	h.a.nowPlaying = false
 	h.a.redraw()
 }
@@ -104,9 +101,64 @@ func (h platformHost) PlatformSearchField(c *ui.Context, placeholder string, sub
 	}
 	field.Children(func() {
 		ui.Icon(c, iconSearch).Size(14, 14).TextColor(h.a.pal.muted)
-		in := ui.TextInput(c.Key("platform-search"), home.SearchText()).Bind(&h.a.searchBox).Placeholder(placeholder).Label("搜索").FontSize(13).Grow(1).MinWidth(0)
-		if in.Submitted() {
-			submit(*home.SearchText())
+		// Use the same base widget as the upstream search field. A plain
+		// TextInput looks close, but does not keep the combobox focus,
+		// keyboard and popup state that gives the search field its behavior.
+		cb := ui.ComboboxBase(c.Key("search"), home.SearchText())
+		in := cb.Input.Bind(&h.a.searchBox).Placeholder(placeholder).Label("搜索").FontSize(13).Grow(1).MinWidth(0)
+		q := strings.TrimSpace(*home.SearchText())
+		if q == "" && len(h.a.settings.SearchHistory) == 0 {
+			cb.SetOpen(false)
+		}
+		cb.Popup(func(panel ui.Element) {
+			panel.AttachTo(field, ui.AnchorBottomStart, ui.AnchorTopStart).
+				Width(360).Padding(6).Margin(8, 0, 0, 0).Radius(12).
+				Background(h.a.pal.bg).Border(1, h.a.pal.hairline).
+				Shadow(0, 8, 24, -4, ui.RGBA(0, 0, 0, 0.2))
+			option := func(key, label string) ui.Element {
+				row := cb.Item(key).MinHeight(36).Padding(6, 10).Gap(10).Radius(7).AlignItems(ui.Center).Label(label)
+				if row.Highlighted() {
+					row.Background(h.a.pal.hover)
+				}
+				return row
+			}
+			if q == "" {
+				panel.Label("搜索历史")
+				ui.Row(c).Padding(2, 4, 2, 10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "搜索历史").FontSize(12).TextColor(h.a.pal.muted).Grow(1)
+					iconButton(c.Key("platform-clear-search-history"), iconTrash, 14, h.a.pal.muted, "清空搜索历史").KeepFocus().OnClick(h.a.clearSearchHistory)
+				})
+				for _, history := range h.a.settings.SearchHistory {
+					history := history
+					option("history:"+history, history).Children(func() {
+						ui.Icon(c, iconSearch).Size(13, 13).TextColor(h.a.pal.muted)
+						ui.Text(c, history).FontSize(13).SingleLine().Shrink(1).MinWidth(0)
+					})
+				}
+			} else {
+				panel.Label("搜索建议")
+				option("query", "搜索“"+q+"”").Children(func() {
+					ui.Icon(c, iconSearch).Size(13, 13).TextColor(h.a.pal.muted)
+					ui.Text(c, "搜索“"+q+"”").FontSize(13).FontWeight(500).SingleLine().Shrink(1).MinWidth(0)
+				})
+			}
+		})
+		if key, ok := cb.Chosen(); ok {
+			cb.SetOpen(false)
+			if history, found := strings.CutPrefix(key, "history:"); found {
+				*home.SearchText() = history
+				q = history
+			}
+			if key == "query" || strings.HasPrefix(key, "history:") {
+				if q != "" {
+					h.a.rememberSearch(q)
+					submit(q)
+				}
+			}
+		} else if in.Submitted() && q != "" {
+			cb.SetOpen(false)
+			h.a.rememberSearch(q)
+			submit(q)
 		}
 	})
 }
@@ -127,11 +179,21 @@ func (h platformHost) PlatformOptions() []appplatform.Info {
 	return h.a.platformInfos()
 }
 
+func (h platformHost) PlatformSwitcher(c *ui.Context) {
+	if h.a != nil {
+		h.a.platformSwitcher(c)
+	}
+}
+
 // SharedSettings is the small common settings surface kept by the upstream
 // app. Platform pages call it after their own settings instead of copying
 // playback, cache, appearance or notch code into every adapter.
 func (h platformHost) SharedSettings(c *ui.Context) {
 	a, p, s := h.a, h.a.pal, &h.a.settings
+	cap := neteasePlatformInfo()
+	if active := a.activePlatform(); active != nil {
+		cap = active.Info()
+	}
 	group := func(title string, rows func()) {
 		ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(p.muted).Margin(14, 4, 4, 4)
 		ui.Column(c).Radius(12).Background(p.bg).Border(1, p.hairline).Dividers(1, p.hairline).Children(rows)
@@ -147,37 +209,45 @@ func (h platformHost) SharedSettings(c *ui.Context) {
 			control()
 		})
 	}
-	group("播放", func() {
-		row("shared-quality", "音质", "下一首歌曲开始生效", func() {
-			labels := make([]string, len(qualityLevels))
-			chosen := s.Quality
-			for i, q := range qualityLevels {
-				labels[i] = q.label
-				if q.level == s.Quality {
-					chosen = q.label
-				}
-			}
-			if ui.Select(c.Key("shared-quality-select"), &chosen, labels).Label("音质").Width(150).Changed() {
-				for _, q := range qualityLevels {
-					if q.label == chosen {
-						s.Quality = q.level
+	if cap.Quality || cap.Normalize || cap.Comments {
+		group("播放", func() {
+			if cap.Quality {
+				row("shared-quality", "音质", "下一首歌曲开始生效", func() {
+					labels := make([]string, len(qualityLevels))
+					chosen := s.Quality
+					for i, q := range qualityLevels {
+						labels[i] = q.label
+						if q.level == s.Quality {
+							chosen = q.label
+						}
 					}
-				}
-				a.changed()
+					if ui.Select(c.Key("shared-quality-select"), &chosen, labels).Label("音质").Width(150).Changed() {
+						for _, q := range qualityLevels {
+							if q.label == chosen {
+								s.Quality = q.level
+							}
+						}
+						a.changed()
+					}
+				})
+			}
+			if cap.Normalize {
+				row("shared-normalize", "音量均衡", "让不同歌曲听起来音量相近", func() {
+					if ui.Switch(c.Key("shared-normalize-switch"), &s.Normalize).Label("音量均衡").Changed() {
+						a.pl.SetVolume(a.volume)
+						a.changed()
+					}
+				})
+			}
+			if cap.Comments {
+				row("shared-hot-comments", "间奏时显示热评", "歌词空白处显示热门评论", func() {
+					if ui.Switch(c.Key("shared-hot-comments-switch"), &s.HotComments).Label("间奏时显示热评").Changed() {
+						a.changed()
+					}
+				})
 			}
 		})
-		row("shared-normalize", "音量均衡", "让不同歌曲听起来音量相近", func() {
-			if ui.Switch(c.Key("shared-normalize-switch"), &s.Normalize).Label("音量均衡").Changed() {
-				a.pl.SetVolume(a.volume)
-				a.changed()
-			}
-		})
-		row("shared-hot-comments", "间奏时显示热评", "歌词空白处显示热门评论", func() {
-			if ui.Switch(c.Key("shared-hot-comments-switch"), &s.HotComments).Label("间奏时显示热评").Changed() {
-				a.changed()
-			}
-		})
-	})
+	}
 	group("缓存", func() {
 		row("shared-cache", "歌曲缓存", a.cacheUsage(), func() {
 			labels := make([]string, len(cacheLimits))
@@ -261,7 +331,7 @@ func (h platformHost) SharedSettings(c *ui.Context) {
 			})
 		})
 	}
-	if a.captionsShown() {
+	if cap.Podcasts && a.captionsShown() {
 		group("播客", func() {
 			a.captionSettings(func(label, desc string, control func()) {
 				row("shared-caption-"+label, label, desc, control)
@@ -280,6 +350,11 @@ func (h platformHost) SharedSettings(c *ui.Context) {
 			}
 		})
 	})
+	if a.platformID != platform.NeteaseID {
+		a.platformSettingsGroup(c, group, func(label, desc string, control func()) {
+			row("platform-"+label, label, desc, control)
+		})
+	}
 	if a.updates {
 		group("更新", func() {
 			row("shared-update-checks", "自动检查更新", "每天检查一次是否有新版本", func() {
@@ -458,6 +533,11 @@ func (h platformHost) RenderTracks(c *ui.Context, l *appplatform.TrackList, view
 	// At is intentionally called while the list is built. It starts the first
 	// page and leaves the pager state independent from UI rebuilds.
 	if l.Total != nil && l.Total() < 0 {
+		// Start the hero request while the first page is still a skeleton. The
+		// first real frame should never be the one that starts downloading it.
+		if view.Cover != "" {
+			h.a.platformArtworkReady(view.Cover, 636)
+		}
 		l.At(0)
 		h.a.trackSkeleton(c, h.a.pageShimmer(c), true, func(c *ui.Context) {
 			h.a.heading(c, view.Title, view.Sub)
@@ -473,6 +553,17 @@ func (h platformHost) RenderTracks(c *ui.Context, l *appplatform.TrackList, view
 		h.a.centered(c, "这里还没有歌曲", nil)
 		return
 	}
+	if !h.platformHeroReady(c, view.Cover) {
+		h.a.trackSkeleton(c, h.a.pageShimmer(c), true, func(c *ui.Context) {
+			if view.Header != nil {
+				view.Header(c)
+			} else {
+				h.a.heading(c, view.Title, view.Sub)
+			}
+		})
+		return
+	}
+	h.prefetchTrackArtwork(l, total, c)
 	get := l.At
 	play := view.OnPlay
 	if play == nil {
@@ -493,21 +584,81 @@ func (h platformHost) RenderTracks(c *ui.Context, l *appplatform.TrackList, view
 	})
 }
 
+// platformHeroReady gates only the detail cover. A slow thumbnail must never
+// keep the page behind its skeleton, and a slow hero must not hold it forever.
+func (h platformHost) platformHeroReady(c *ui.Context, cover string) bool {
+	if cover == "" {
+		return true
+	}
+	if h.a.platformHeroSince.IsZero() {
+		h.a.platformHeroSince = c.Now()
+	}
+	if h.a.platformArtworkReady(cover, 636) {
+		return true
+	}
+	if c.Now().Sub(h.a.platformHeroSince) >= 450*time.Millisecond {
+		return true
+	}
+	c.After(40 * time.Millisecond)
+	return false
+}
+
+func (h platformHost) prefetchTrackArtwork(l *appplatform.TrackList, total int, c *ui.Context) {
+	if l == nil || l.At == nil {
+		return
+	}
+	_, height := c.Size()
+	count := max(12, int(height/54)+6)
+	count = min(count, total)
+	urls := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		if tr := l.At(i); tr != nil {
+			urls = append(urls, tr.Album.PicURL)
+		}
+	}
+	h.a.prefetchPlatformArtwork(urls, 96)
+}
+
 func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlist], view appplatform.CardView) {
 	if p == nil {
 		h.a.centered(c, "没有找到相关内容", nil)
 		return
 	}
 	p.At(0)
+	header := func(c *ui.Context) {
+		if view.Header != nil {
+			view.Header(c)
+			return
+		}
+		ui.Column(c).Gap(4).Margin(0, 0, 18, 0).Children(func() {
+			ui.Text(c, view.Title).FontSize(30).FontWeight(700).LetterSpacing(-0.6)
+			if view.Sub != "" {
+				ui.Text(c, view.Sub).FontSize(12).FontWeight(600).TextColor(h.a.pal.muted).LetterSpacing(0.4)
+			}
+			if view.Count > 0 {
+				ui.Text(c, fmt.Sprintf("共 %d 个", view.Count)).FontSize(13).TextColor(h.a.pal.muted)
+			}
+		})
+	}
 	if p.Total() < 0 {
 		if p.FailedAt(0) {
 			h.a.centered(c, "加载失败，请稍后重试", p.Retry)
 			return
 		}
 		cols, card := h.a.cardWidth(c)
-		h.a.playlistCardsSkeleton(c, h.a.pageShimmer(c), cols, card, false)
+		top, bottom := h.a.insets(c)
+		h.a.underTop, h.a.underBottom = false, true
+		ui.Scroll(c.Key("platform-cards-loading")).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Children(func() {
+			header(c)
+			h.a.playlistCardsSkeleton(c, h.a.pageShimmer(c), cols, card, false)
+		})
 		return
 	}
+	if p.FailedAt(0) {
+		h.a.centered(c, "加载失败，请稍后重试", p.Retry)
+		return
+	}
+	h.prefetchCardArtwork(p, c)
 	pages, size := p.PageCount(), p.PageSize()
 	if pages == 0 {
 		h.a.centered(c, "没有找到相关内容", nil)
@@ -515,15 +666,16 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 	}
 	top, bottom := h.a.insets(c)
 	h.a.underTop, h.a.underBottom = true, true
-	ui.List(c.Key("platform-cards"), &h.a.platformCardList, pages+1, func(row int) {
+	routeKey := "platform-cards"
+	if home := h.a.activeHome(); home != nil {
+		r := home.Route()
+		routeKey = fmt.Sprintf("platform-cards-%s-%d-%s", r.Page, r.ID, r.Query)
+	}
+	ui.List(c.Key(routeKey), &h.a.platformCardList, pages+1, func(row int) {
 		if row == 0 {
 			ui.Column(c).Children(func() {
 				h.a.startMark(c)
-				sub := view.Sub
-				if view.Count > 0 {
-					sub = fmt.Sprintf("%s · %d", sub, view.Count)
-				}
-				h.a.heading(c, view.Title, sub)
+				header(c)
 				if len(view.Sort) > 0 {
 					ui.Row(c).Margin(-6, 0, 18, 0).AlignItems(ui.Center).Gap(10).Children(func() {
 						ui.Text(c, "排序").FontSize(12).TextColor(h.a.pal.muted)
@@ -612,14 +764,14 @@ func (h platformHost) RenderSearch(c *ui.Context, s appplatform.SearchResults, v
 	}, func(c *ui.Context) {
 		h.a.heading(c, "“"+s.Query+"”", "搜索")
 		if albums != nil && albums.Len() > 0 {
-			h.searchCardStrip(c, "专辑", albums, view.OpenList, func() {
+			h.searchCardStrip(c, "专辑", albums, view.OpenList, view.PlayCard, func() {
 				if view.OpenCards != nil {
 					view.OpenCards("albums")
 				}
 			})
 		}
 		if artists != nil && artists.Len() > 0 {
-			h.searchCardStrip(c, "歌手", artists, view.OpenList, func() {
+			h.searchCardStrip(c, "歌手", artists, view.OpenList, view.PlayCard, func() {
 				if view.OpenCards != nil {
 					view.OpenCards("artists")
 				}
@@ -631,7 +783,7 @@ func (h platformHost) RenderSearch(c *ui.Context, s appplatform.SearchResults, v
 	})
 }
 
-func (h platformHost) searchCardStrip(c *ui.Context, title string, p *paging.Pager[netease.Playlist], open func(int64), all func()) {
+func (h platformHost) searchCardStrip(c *ui.Context, title string, p *paging.Pager[netease.Playlist], open func(int64), play func(int64), all func()) {
 	cols := h.a.columns(c, 168)
 	ui.Row(c).AlignItems(ui.Center).Margin(34, 0, 14, 0).Children(func() {
 		ui.Text(c, title).FontSize(19).FontWeight(700).LetterSpacing(-0.3).Grow(1)
@@ -650,15 +802,33 @@ func (h platformHost) searchCardStrip(c *ui.Context, title string, p *paging.Pag
 		for i := 0; i < min(cols, p.Len()); i++ {
 			if pl := p.Peek(i); pl != nil {
 				ui.Box(c.Key(fmt.Sprintf("search-%s-%d", title, pl.ID))).Width(168).Children(func() {
-					h.a.coverCard(c, pl.Name, pl.Cover(), pl.PlayCount, pl.UpdateFreq, func() {
-						if open != nil {
-							open(pl.ID)
+					clicked := h.a.coverCard(c, pl.Name, pl.Cover(), pl.PlayCount, pl.UpdateFreq, func() {
+						if play != nil {
+							play(pl.ID)
 						}
 					})
+					if clicked && open != nil {
+						open(pl.ID)
+					}
 				})
 			}
 		}
 	})
+}
+
+func (h platformHost) prefetchCardArtwork(p *paging.Pager[netease.Playlist], c *ui.Context) {
+	if p == nil {
+		return
+	}
+	cols := h.a.columns(c, 168)
+	count := min(p.Len(), cols*2)
+	urls := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		if pl := p.Peek(i); pl != nil {
+			urls = append(urls, pl.Cover())
+		}
+	}
+	h.a.prefetchPlatformArtwork(urls, 400)
 }
 
 // sharedPlayer keeps the concrete player out of the platform package while

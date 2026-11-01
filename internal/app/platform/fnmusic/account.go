@@ -10,6 +10,9 @@ func (h *Home) accountActions() []AccountAction {
 		}
 	}
 	settings := AccountAction{Icon: iconSettings, Label: "设置…", Shortcut: "Ctrl+,", Action: openSettings}
+	if h.state != nil && h.state.Connecting() {
+		return []AccountAction{settings}
+	}
 	if h.state != nil && (h.state.Connected() || h.state.Error() != nil) {
 		return []AccountAction{
 			settings,

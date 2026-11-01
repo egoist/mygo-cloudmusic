@@ -79,8 +79,6 @@ func (a *app) settingsView(c *ui.Context) {
 			})
 		}
 
-		a.platformSettingsGroup(c, group, row)
-
 		// Only on macOS: elsewhere the icon is always in the notification
 		// area.
 		if runtime.GOOS == "darwin" {
@@ -219,6 +217,8 @@ func (a *app) settingsView(c *ui.Context) {
 				}
 			})
 		})
+
+		a.platformSettingsGroup(c, group, row)
 
 		group("账号", func() {
 			if a.profile == nil {

@@ -1,6 +1,10 @@
 package paging
 
-import "sync"
+import (
+	"context"
+	"errors"
+	"sync"
+)
 
 // Provider-neutral paging module.
 //
@@ -114,6 +118,14 @@ func (p *Pager[T]) load(pg int) {
 				return
 			}
 			if err != nil {
+				// A platform switch or reconnect invalidates the request. It is
+				// not a failed page and must not turn the loading skeleton into
+				// a misleading retry button.
+				if errors.Is(err, context.Canceled) {
+					p.state[pg] = pageNone
+					p.wake(pg, false)
+					return
+				}
 				p.fail(pg, err)
 				return
 			}

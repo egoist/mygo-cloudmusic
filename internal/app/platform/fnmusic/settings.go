@@ -38,35 +38,6 @@ func (h *Home) Settings(c *ui.Context) {
 	t := *c.Theme()
 	c.Root().Background(t.Background)
 	ui.Scroll(c).Fill().Padding(24, 28, 32, 28).Gap(8).Children(func() {
-		ui.Text(c, "平台").FontSize(12).FontWeight(600).TextColor(t.TextMuted).Margin(14, 4, 4, 4)
-		ui.Column(c).Radius(12).Background(t.Background).Border(1, t.Border).Dividers(1, t.Border).Children(func() {
-			ui.Row(c).Padding(12, 16).Gap(16).AlignItems(ui.Center).Children(func() {
-				ui.Column(c).Grow(1).Gap(3).Children(func() {
-					ui.Text(c, "音乐平台").FontSize(13.5).FontWeight(500)
-					ui.Text(c, "切换后主页和平台设置使用独立上下文").FontSize(12).TextColor(t.TextMuted)
-				})
-				options := h.host.PlatformOptions()
-				if len(options) == 0 {
-					return
-				}
-				labels := make([]string, len(options))
-				chosen := ""
-				for i, option := range options {
-					labels[i] = option.Name
-					if option.ID == h.host.CurrentPlatform() {
-						chosen = option.Name
-					}
-				}
-				if ui.Select(c.Key("fnmusic-platform"), &chosen, labels).Label("音乐平台").Width(150).Changed() {
-					for _, option := range options {
-						if option.Name == chosen {
-							h.host.SwitchPlatform(option.ID)
-							break
-						}
-					}
-				}
-			})
-		})
 		ui.Text(c, "飞牛音乐").FontSize(12).FontWeight(600).TextColor(t.TextMuted).Margin(14, 4, 4, 4)
 		ui.Column(c).Radius(12).Background(t.Background).Border(1, t.Border).Dividers(1, t.Border).Children(func() {
 			var cfg appplatform.ConnectionConfig

@@ -19,6 +19,8 @@ func (s *State) Connect(ctx context.Context, cfg backend.Config) error {
 		return err
 	}
 	gen := s.beginConnect()
+	s.setConnecting(gen, true)
+	defer s.setConnecting(gen, false)
 	c, err := backend.New(cfg)
 	if err != nil {
 		if s.connectCurrent(gen) {

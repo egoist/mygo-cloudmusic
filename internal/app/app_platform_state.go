@@ -1,6 +1,8 @@
 package app
 
 import (
+	"time"
+
 	"github.com/egoist/mygo/ui"
 	appplatform "netease-music-mygo/internal/app/platform"
 	"netease-music-mygo/internal/platform"
@@ -16,4 +18,7 @@ type appPlatformState struct {
 	platforms          map[platform.ID]appplatform.Adapter
 	platformGeneration uint64
 	platformCardList   ui.ListState
+	platformRoute      appplatform.Route
+	platformHeroSince  time.Time
+	platformMenuOpen   bool
 }

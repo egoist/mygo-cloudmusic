@@ -51,8 +51,10 @@ func (a *app) configurePlatformPlayer() {
 }
 
 func (a *app) startPlatform() {
-	a.initPlatformState()
-	a.configurePlatformPlayer()
+	if a.platforms == nil {
+		a.initPlatformState()
+		a.configurePlatformPlayer()
+	}
 	if a.platformID == platform.NeteaseID {
 		a.boot()
 	} else {
@@ -110,7 +112,7 @@ func (a *app) platformInfos() []appplatform.Info {
 }
 
 func neteasePlatformInfo() appplatform.Info {
-	return appplatform.Info{ID: platform.NeteaseID, Name: "网易云音乐", Comments: true}
+	return appplatform.Info{ID: platform.NeteaseID, Name: "网易云音乐", Comments: true, Podcasts: true, Quality: true, Normalize: true}
 }
 
 func (a *app) commentsEnabled() bool {

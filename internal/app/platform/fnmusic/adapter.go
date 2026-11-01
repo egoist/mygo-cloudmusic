@@ -28,6 +28,13 @@ func NewAdapter(host Host, settings *appplatform.PlatformSettings, save ...func(
 		cfg := fromConnectionConfig(settings.Config)
 		LoadCredentials(&cfg)
 		state.SetConfig(cfg)
+		if cfg.Valid() {
+			// Mark the restored session as loading before the first window
+			// frame. The root starts the actual connection just after the
+			// window is created, so this prevents a configured account from
+			// flashing the connection form once at startup.
+			state.setConnecting(state.Generation(), true)
+		}
 	}
 	if host != nil {
 		state.SetPost(host.Post)
@@ -48,7 +55,7 @@ func (a *Adapter) Home() appplatform.Home {
 }
 
 func (a *Adapter) Info() appplatform.Info {
-	return appplatform.Info{ID: platform.FnmusicID, Name: "飞牛音乐", Comments: false}
+	return appplatform.Info{ID: platform.FnmusicID, Name: "飞牛音乐", Comments: false, Podcasts: false, Quality: false, Normalize: false}
 }
 
 func (a *Adapter) Runtime() appplatform.Runtime {

@@ -20,6 +20,25 @@ func TestCardRouteKeepsProviderReference(t *testing.T) {
 	}
 }
 
+// Platform navigation keeps a detail page reachable without touching the upstream route history.
+func TestPlatformNavigationBackAndForward(t *testing.T) {
+	h := NewHome(NewState(), nil)
+	h.ResetNavigation(Route{Page: PageLibrary})
+	h.Open(Route{Page: PageAlbums})
+	h.Open(Route{Page: PagePlaylist, ID: 42, Kind: backend.KindAlbum, Query: "album-guid"})
+	if !h.CanBack() || h.CanForward() {
+		t.Fatalf("navigation state after open: back=%v forward=%v", h.CanBack(), h.CanForward())
+	}
+	h.Back()
+	if got := h.Route(); got.Page != PageAlbums || !h.CanForward() {
+		t.Fatalf("after back: route=%#v forward=%v", got, h.CanForward())
+	}
+	h.Forward()
+	if got := h.Route(); got.Page != PagePlaylist || got.Kind != backend.KindAlbum || !h.CanBack() {
+		t.Fatalf("after forward: route=%#v back=%v", got, h.CanBack())
+	}
+}
+
 // Address mode strips an explicitly typed scheme while preserving the selected protocol.
 func TestSplitScheme(t *testing.T) {
 	tests := []struct {

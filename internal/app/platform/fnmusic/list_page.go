@@ -13,9 +13,11 @@ func (h *Home) listHeader(c *ui.Context, l *List) {
 	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 0, 26, 0).Children(func() {
 		h.host.Cover(c, l.Cover(), 212, 14).Shadow(0, 18, 40, -10, ui.RGBA(0, 0, 0, 0.24))
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
-			ui.Text(c, l.Kind).FontSize(12).FontWeight(600).TextColor(t.Accent)
+			if l.HeaderKind != "" && l.HeaderKind != l.Name {
+				ui.Text(c, l.HeaderKind).FontSize(12).FontWeight(600).TextColor(t.Accent)
+			}
 			ui.Text(c, l.Name).FontSize(30).FontWeight(800).LetterSpacing(-0.6).MaxLines(2).LineHeight(1.2)
-			var meta []string
+			meta := []string{"飞牛音乐"}
 			if l.Sub != "" {
 				meta = append(meta, l.Sub)
 			}

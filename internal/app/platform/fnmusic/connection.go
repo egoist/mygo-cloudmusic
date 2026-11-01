@@ -23,7 +23,7 @@ func (h *Home) disconnect() {
 				if err != nil {
 					h.connectionError = err.Error()
 				}
-				h.host.Navigate(Route{Page: PageLibrary})
+				h.ResetNavigation(Route{Page: PageLibrary})
 				h.host.Invalidate()
 			})
 		}()

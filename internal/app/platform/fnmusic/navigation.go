@@ -29,7 +29,9 @@ func (h *Home) Sidebar(c *ui.Context) {
 		}
 	})
 	ui.Scroll(c.Key("fnmusic-nav")).TrackScroll(&h.navScroll).Grow(1).Margin(0, -6).Padding(0, 6).Gap(4).Children(func() {
-		if !h.state.Connected() {
+		if h.state.Connecting() {
+			h.sidebarLoading(c)
+		} else if !h.state.Connected() {
 			h.host.NavItem(c, iconServer, "连接飞牛音乐", Route{Page: PageLibrary})
 		} else {
 			h.host.NavItem(c, iconNote, "音乐库", Route{Page: PageLibrary})
@@ -59,6 +61,12 @@ func (h *Home) Sidebar(c *ui.Context) {
 	}
 	cfg := toConnectionConfig(h.state.Config())
 	username, status := cfg.Username, "未连接"
+	if h.state.Connecting() {
+		if username == "" {
+			username = "飞牛音乐"
+		}
+		status = "正在连接…"
+	}
 	if username == "" {
 		username = "飞牛音乐（未连接）"
 	}
@@ -76,4 +84,18 @@ func (h *Home) Sidebar(c *ui.Context) {
 	}
 	actions := h.accountActions()
 	h.host.AccountRow(c, iconServer, username, status, &h.accountOpen, actions)
+	h.host.PlatformSwitcher(c)
+}
+
+// sidebarLoading keeps the configured platform layout stable while the first
+// connection and playlist request are in flight. Showing the connect CTA here
+// made the sidebar flash to a different navigation tree on every launch.
+func (h *Home) sidebarLoading(c *ui.Context) {
+	t := c.Theme()
+	for i := 0; i < 5; i++ {
+		ui.Row(c.Key(fmt.Sprintf("fnmusic-nav-loading-%d", i))).Height(34).PaddingX(10).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(17, 17).Radius(5).Background(t.TextMuted.Alpha(0.16))
+			ui.Box(c).Height(12).Width(72 + float32(i%3)*20).Radius(6).Background(t.TextMuted.Alpha(0.16))
+		})
+	}
 }

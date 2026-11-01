@@ -220,6 +220,11 @@ func Run() error {
 		}
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
+		// Resolve the selected platform before the first window frame. Otherwise
+		// a configured platform briefly renders the upstream home and then
+		// switches during startup.
+		a.initPlatformState()
+		a.configurePlatformPlayer()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:         mygo.App.Name(),
 			Width:         1180,

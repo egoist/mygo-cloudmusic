@@ -80,6 +80,11 @@ type Home interface {
 	Content(*ui.Context)
 	Settings(*ui.Context)
 	Open(Route)
+	CanBack() bool
+	CanForward() bool
+	Back()
+	Forward()
+	ResetNavigation(Route)
 	CloseTransient()
 	Route() Route
 	SearchText() *string
@@ -101,9 +106,12 @@ type Adapter interface {
 // The root app uses it to enumerate and validate adapters; it never needs to
 // name a concrete provider package or compare a provider-specific constant.
 type Info struct {
-	ID       coreplatform.ID
-	Name     string
-	Comments bool
+	ID        coreplatform.ID
+	Name      string
+	Comments  bool
+	Podcasts  bool
+	Quality   bool
+	Normalize bool
 }
 
 type Route struct {
@@ -168,6 +176,7 @@ type TrackView struct {
 
 type SearchView struct {
 	Play      func(int)
+	PlayCard  func(int64)
 	TrackMenu func(*ui.Menu, *netease.Track, int64)
 	Liked     func(int64) bool
 	Favorite  func(netease.Track, bool)
@@ -186,6 +195,7 @@ type CardView struct {
 	Title   string
 	Sub     string
 	Count   int
+	Header  func(*ui.Context)
 	Sort    []SortChoice
 	Current string
 	OnSort  func(string)
@@ -207,6 +217,7 @@ type Host interface {
 	Player() PlayerPort
 	PlatformSearchField(*ui.Context, string, func(string))
 	PlatformOptions() []Info
+	PlatformSwitcher(*ui.Context)
 	NavItem(*ui.Context, *ui.SVG, string, Route)
 	PlaylistHeader(*ui.Context, func())
 	PlaylistItem(*ui.Context, string, netease.Playlist, bool, func(*ui.Menu), func())

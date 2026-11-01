@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 
+	appplatform "netease-music-mygo/internal/app/platform"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -145,6 +146,12 @@ func (a *app) back() {
 		a.nowPlaying = false
 		return
 	}
+	if home := a.activeHome(); home != nil {
+		home.Back()
+		a.platformRoute = appplatform.Route{}
+		a.redraw()
+		return
+	}
 	if len(a.history) == 0 {
 		return
 	}
@@ -157,6 +164,12 @@ func (a *app) back() {
 // goForward goes to the page back left, as the forward button of a mouse
 // does.
 func (a *app) goForward() {
+	if home := a.activeHome(); home != nil {
+		home.Forward()
+		a.platformRoute = appplatform.Route{}
+		a.redraw()
+		return
+	}
 	if len(a.forward) == 0 {
 		return
 	}
@@ -197,6 +210,7 @@ func (a *app) sidebar(c *ui.Context) {
 			a.sidebarNowPlaying(c, tr)
 		}
 		a.accountRow(c)
+		a.platformSwitcher(c)
 	})
 }
 
@@ -321,6 +335,9 @@ func edgeShown(el ui.Element, under bool) float32 {
 // the back button once there is a page to go back to.
 func (a *app) pageTop(c *ui.Context) {
 	top, _ := a.insets(c)
+	if a.activeHome() != nil && a.platformPageTop(c) {
+		return
+	}
 	edge := ui.Box(c.Key("top-edge")).Absolute().Top(0).Left(0).Right(0).Height(top).DragWindow().
 		Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
 	edge.Opacity(edgeShown(edge, a.underTop))

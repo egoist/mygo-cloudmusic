@@ -26,6 +26,7 @@ type State struct {
 	provider   *backend.Provider
 	config     backend.Config
 	connectGen uint64
+	connecting bool
 	post       func(func())
 	err        error
 	playlists  []netease.Playlist
@@ -98,6 +99,38 @@ func (s *State) beginConnect() uint64 {
 	return s.connectGen
 }
 
+func (s *State) setConnecting(gen uint64, on bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.connectGen == gen {
+		s.connecting = on
+	}
+	s.mu.Unlock()
+}
+
+func (s *State) finishConnecting() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.connecting = false
+	s.mu.Unlock()
+}
+
+// Connecting reports an automatic or manual login that has not published its
+// final catalog state yet. The home uses this to keep a loading surface up
+// instead of flashing the connection form.
+func (s *State) Connecting() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.connecting
+}
+
 // Generation identifies the current connection session. UI actions capture
 // it before starting asynchronous work and ignore completions after a
 // reconnect, disconnect or platform switch.
@@ -118,6 +151,7 @@ func (s *State) Cancel() {
 	}
 	s.mu.Lock()
 	s.connectGen++
+	s.connecting = false
 	s.mu.Unlock()
 }
 
@@ -225,6 +259,7 @@ func (s *State) Attach(client *backend.Client) error {
 	}
 	s.mu.Lock()
 	s.attachLocked(client)
+	s.connecting = false
 	s.mu.Unlock()
 	return nil
 }
@@ -267,6 +302,7 @@ func (s *State) Detach() *backend.Client {
 	client := s.client
 	s.connectGen++
 	s.client, s.provider, s.err = nil, nil, nil
+	s.connecting = false
 	s.config = backend.Config{}
 	s.playlists = nil
 	s.roamID = ""

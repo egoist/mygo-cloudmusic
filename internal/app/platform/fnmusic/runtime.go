@@ -59,9 +59,13 @@ func (r *RuntimeAdapter) Connect(ctx context.Context, cfg appplatform.Connection
 		return backend.ErrSignedOut
 	}
 	b := fromConnectionConfig(cfg)
+	defer r.state.finishConnecting()
 	if err := r.state.Connect(ctx, b); err != nil {
 		return err
 	}
+	// State.Connect publishes the client and completes its login phase. Keep
+	// the loading surface until the sidebar catalog has also landed.
+	r.state.setConnecting(r.state.Generation(), true)
 	canonical := toConnectionConfig(r.state.Config())
 	if r.settings != nil {
 		r.settings.Config = canonical

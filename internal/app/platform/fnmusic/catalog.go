@@ -41,15 +41,16 @@ type Spec struct {
 // List is a lazily loaded Feiniu catalog. Its pager is platform state, not UI
 // state, so a view can be rebuilt without losing loaded pages.
 type List struct {
-	ID       int64
-	Spec     Spec
-	Kind     string
-	Name     string
-	Sub      string
-	CoverURL string
-	Fetch    func(page, size int) ([]netease.Track, int, error)
-	Pages    *paging.Pager[netease.Track]
-	Shuffle  bool
+	ID         int64
+	Spec       Spec
+	Kind       string
+	HeaderKind string
+	Name       string
+	Sub        string
+	CoverURL   string
+	Fetch      func(page, size int) ([]netease.Track, int, error)
+	Pages      *paging.Pager[netease.Track]
+	Shuffle    bool
 }
 
 // View adapts the provider-owned pager to the application-wide list seam.
@@ -163,24 +164,27 @@ func (c *Catalog) NewList(spec Spec) *List {
 			sort = fnmusic.SortRecent
 		}
 		l.Kind, l.Name = "飞牛音乐", "音乐库"
+		l.HeaderKind = "音乐库"
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.LibraryPage(sort, page, size) })
 	case ListFavorites:
 		l.Kind, l.Name = "飞牛音乐", "我喜欢"
+		l.HeaderKind = "歌单"
 		l.Fetch = guard(client.FavoritesPage)
 	case ListRecent:
 		l.Kind, l.Name = "飞牛音乐", "最近播放"
+		l.HeaderKind = "播放记录"
 		l.Fetch = guard(client.RecentPage)
 	case ListAlbum:
-		l.Kind = fnmusic.KindAlbum
+		l.Kind, l.HeaderKind = fnmusic.KindAlbum, "专辑"
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.AlbumPage(spec.Ref, page, size) })
 	case ListArtist:
-		l.Kind = fnmusic.KindArtist
+		l.Kind, l.HeaderKind = fnmusic.KindArtist, "歌手"
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.ArtistPage(spec.Ref, page, size) })
 	case ListPlaylist:
-		l.Kind = "歌单"
+		l.Kind, l.HeaderKind = "歌单", "歌单"
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.PlaylistPage(spec.Ref, page, size) })
 	case ListSearch:
-		l.Kind, l.Name = "搜索", spec.Query
+		l.Kind, l.HeaderKind, l.Name = "搜索", "搜索", spec.Query
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.SearchPage(spec.Query, page, size) })
 	default:
 		return nil
@@ -240,7 +244,7 @@ func (c *Catalog) ListForRoute(id int64, kind, ref string) *List {
 			meta = netease.Playlist{ID: id, Ref: ref, Kind: kind}
 			ok = true
 		}
-		if !ok {
+		if !ok && c.Session != nil {
 			for _, pl := range c.Session.Playlists() {
 				if pl.ID == id {
 					meta, ok = pl, true
@@ -249,6 +253,12 @@ func (c *Catalog) ListForRoute(id int64, kind, ref string) *List {
 			}
 		}
 		if !ok {
+			return nil
+		}
+		// Album and artist routes require the provider GUID. Never turn a
+		// partially resolved card into a playlist request: that endpoint can
+		// return an unrelated list and was the source of the card crash path.
+		if meta.Ref == "" {
 			return nil
 		}
 		spec.Ref = meta.Ref

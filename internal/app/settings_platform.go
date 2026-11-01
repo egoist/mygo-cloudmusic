@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -76,9 +77,12 @@ func (a *app) setPlatform(id platform.ID) {
 	a.nowPlaying = false
 	a.trackList, a.platformCardList = ui.ListState{}, ui.ListState{}
 	a.pageScroll, a.navScroll = ui.ScrollState{}, ui.ScrollState{}
+	a.platformHeroSince = time.Time{}
+	a.platformMenuOpen = false
+	a.platformRoute = appplatform.Route{}
 	a.scrolled = route{}
 	if home := a.activeHome(); home != nil {
-		home.Open(appplatform.Route{Page: "library"})
+		home.ResetNavigation(appplatform.Route{Page: "library"})
 		if rt := a.activeRuntime(); rt != nil && rt.Configured() && !rt.Connected() {
 			go func() { _ = rt.Connect(context.Background(), rt.Config()) }()
 		}

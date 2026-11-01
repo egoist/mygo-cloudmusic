@@ -61,3 +61,15 @@ func TestPlatformInfosComeFromAdapters(t *testing.T) {
 		t.Fatalf("adapter identity = %#v", infos[1])
 	}
 }
+
+// Platform capabilities keep NetEase-only settings out of Feiniu's settings page.
+func TestPlatformCapabilities(t *testing.T) {
+	a := newPlatformTestApp()
+	infos := a.platformInfos()
+	if !infos[0].Quality || !infos[0].Normalize || !infos[0].Podcasts || !infos[0].Comments {
+		t.Fatalf("NetEase capabilities = %#v", infos[0])
+	}
+	if infos[1].Quality || infos[1].Normalize || infos[1].Podcasts || infos[1].Comments {
+		t.Fatalf("Feiniu capabilities = %#v", infos[1])
+	}
+}

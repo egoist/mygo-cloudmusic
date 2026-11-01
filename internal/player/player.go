@@ -24,6 +24,7 @@ const (
 // Player plays a queue of tracks. Its methods run on the main thread;
 // loading happens on goroutines, whose results post brings back there.
 type Player struct {
+	PlatformPlayer
 	post func(func())
 	// Quality returns the stream level to load, as the settings say.
 	Quality func() string
@@ -249,7 +250,9 @@ func (p *Player) refill() {
 			return
 		}
 		p.feeding = false
-		p.appendTracks(more)
+		if !p.acceptRefill(more) {
+			return
+		}
 		switch {
 		case !p.awaiting:
 		case p.at+1 < len(p.order):
@@ -591,7 +594,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.refill()
 
 	go func() {
-		cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600))
+		cover, err := p.resolveArtwork(&t)
 		if err == nil {
 			p.post(func() {
 				if gen == p.gen {
@@ -602,7 +605,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	}()
 
 	go func() {
-		lrc, trans, yrc, err := netease.Lyrics(t.ID)
+		lrc, trans, yrc, err := p.resolveLyrics(&t)
 		var lines []lyrics.Line
 		if err == nil {
 			lines = lyrics.Build(lrc, trans, yrc)
@@ -683,10 +686,13 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 // open opens track t's audio at level: kept in the cache, or else
 // streamed into it, and kept once it has all come in.
 func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, error) {
+	if info, decoded, err, handled := p.resolveAudio(&t, level); handled {
+		return info, decoded, err
+	}
 	dl, info, ok := p.Cache.lookup(t.ID, level)
 	if !ok {
 		var err error
-		info, err = netease.SongURL(t.ID, level)
+		info, err = p.resolveStream(&t, level)
 		if err != nil {
 			return nil, nil, err
 		}

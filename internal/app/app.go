@@ -142,6 +142,8 @@ type app struct {
 	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
 	updates     bool  // the update plugin is used (useUpdater)
 
+	appPlatformState
+
 	restored     bool   // playback picked up where it was left
 	savedSession string // the session as last kept
 	sessionDue   bool   // a save of the session is due
@@ -236,7 +238,7 @@ func Run() error {
 			Content:              ui.View(a.view),
 		})
 		a.setMenu()
-		a.boot()
+		a.startPlatform()
 		// The notch player is macOS's, over its menu bar: elsewhere it would
 		// hang at the top of the screen as a black box.
 		if runtime.GOOS == "darwin" {

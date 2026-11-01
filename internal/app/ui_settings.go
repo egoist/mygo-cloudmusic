@@ -50,12 +50,16 @@ func (a *app) changed() {
 }
 
 func (a *app) settingsView(c *ui.Context) {
+	c.OnShortcut(ui.Cmd, ui.KeyW, func() { a.settingsWin.Close() })
+	if home := a.activeHome(); home != nil {
+		home.Settings(c)
+		return
+	}
 	t := *c.Theme()
 	p := paletteFor(&t)
 	t.Accent, t.AccentText = p.accent, p.onAccent
 	c.SetTheme(&t)
 	c.Root().Background(p.sidebar)
-	c.OnShortcut(ui.Cmd, ui.KeyW, func() { a.settingsWin.Close() })
 	s := &a.settings
 
 	ui.Scroll(c).Fill().Padding(24, 28, 32, 28).Gap(8).Children(func() {
@@ -74,6 +78,8 @@ func (a *app) settingsView(c *ui.Context) {
 				control()
 			})
 		}
+
+		a.platformSettingsGroup(c, group, row)
 
 		// Only on macOS: elsewhere the icon is always in the notification
 		// area.

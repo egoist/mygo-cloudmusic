@@ -87,6 +87,9 @@ func (a *app) restoreSession() {
 	if json.Unmarshal(b, &s) != nil {
 		return
 	}
+	if !a.sessionBelongsToActivePlatform(s) {
+		return
+	}
 	a.savedSession = string(b)
 	a.pl.Restore(s)
 	if s.Radio != "" && a.pl.Current() != nil {

@@ -37,7 +37,7 @@ type quietState struct {
 // quietComment returns the hot comment to show at pos, nil for none, and
 // how long until that changes, 0 for never.
 func (a *app) quietComment(tr *netease.Track, lines []lyrics.Line, loaded bool, pos time.Duration) (*netease.Comment, time.Duration) {
-	if !a.settings.HotComments {
+	if !a.settings.HotComments || !a.commentsEnabled() {
 		return nil, 0
 	}
 	qs := &a.quiet
@@ -173,7 +173,7 @@ func (a *app) hotCard(c *ui.Context, dim, size float32, place func(ui.Element)) 
 			}
 		})
 	})
-	if card.Clicked() {
+	if card.Clicked() && a.commentsEnabled() {
 		a.npPane = paneComments
 	}
 }

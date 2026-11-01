@@ -11,6 +11,7 @@ import (
 // settings are the listener's choices, kept in settings.json in the user
 // data directory.
 type settings struct {
+	platformSettings
 	// Notch shows the quick player around the notch: the listener turns
 	// it on.
 	Notch bool `json:"notch"`

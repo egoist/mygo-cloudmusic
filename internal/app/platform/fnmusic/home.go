@@ -7,6 +7,7 @@ import (
 
 	appplatform "netease-music-mygo/internal/app/platform"
 	"netease-music-mygo/internal/netease"
+	backend "netease-music-mygo/internal/platform/fnmusic"
 )
 
 // Home owns the Feiniu navigation and page selection. It deliberately does
@@ -173,10 +174,39 @@ func (h *Home) Content(c *ui.Context) {
 	h.dialogs(c)
 }
 
-// connectionLoading is the library's page while the session connects, as
-// its blocks: the page it lands on, in place, with nothing moving after.
+// connectionLoading keeps the selected page's layout while the session connects.
 func (h *Home) connectionLoading(c *ui.Context) {
-	h.host.TrackSkeleton(c, true)
+	switch h.route.Page {
+	case PageSearch:
+		h.host.SearchSkeleton(c)
+	case PageSearchAlbums, PageSearchArtists, PageAlbums, PageArtists, PageGenres:
+		h.host.CardsSkeleton(c, h.cardSkeletonView())
+	case PageFolders:
+		if h.route.Query == "" {
+			h.folderRootsSkeleton(c)
+		} else {
+			h.folderContentSkeleton(c)
+		}
+	case PageRoam:
+		h.roamSkeleton(c)
+	default:
+		var l *List
+		id := h.route.ID
+		if h.route.Page == PageLibrary {
+			id = backend.LibraryID
+		}
+		if catalog := h.state.Catalog(); catalog != nil {
+			l = catalog.Lists[id]
+		}
+		showAlbum := true
+		if l != nil {
+			showAlbum = l.Spec.Kind != ListAlbum && l.Spec.Kind != ListArtist
+		}
+		h.host.TrackSkeleton(c, TrackView{
+			ShowAlbum:      showAlbum,
+			HeaderSkeleton: func(c *ui.Context) { h.listHeaderSkeleton(c, l) },
+		})
+	}
 }
 
 func (h *Home) RequestFavorite(tr netease.Track, liked bool) {

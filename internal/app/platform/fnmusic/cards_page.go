@@ -97,6 +97,20 @@ func (h *Home) playCardFrom(p *paging.Pager[netease.Playlist], id int64) {
 
 func (h *Home) playCard(id int64) { h.playCardFrom(nil, id) }
 
+func (h *Home) cardSkeletonView() CardView {
+	view := CardView{}
+	switch h.route.Page {
+	case PageAlbums:
+		view.Sort = []SortChoice{{Value: backend.AlbumsSize, Label: "歌曲数"}, {Value: backend.AlbumsRecent, Label: "最近添加"}, {Value: backend.AlbumsName, Label: "名称"}}
+	case PageArtists:
+		view.Sort = []SortChoice{{Value: backend.ArtistsSize, Label: "歌曲数"}, {Value: backend.ArtistsAlbums, Label: "专辑数"}, {Value: backend.ArtistsName, Label: "名称"}}
+	case PageGenres:
+		view.Meta = true
+		view.Sort = []SortChoice{{Value: backend.SortGenreTrackCountDesc, Label: "歌曲数"}, {Value: backend.SortGenreNameAsc, Label: "名称"}}
+	}
+	return view
+}
+
 func (h *Home) cardsPage(c *ui.Context) {
 	switch h.route.Page {
 	case PageSearch:

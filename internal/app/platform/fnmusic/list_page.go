@@ -58,20 +58,44 @@ func (h *Home) listPage(c *ui.Context) {
 	if l != nil && l.Pages != nil {
 		h.host.RenderTracks(c, l.View(), TrackView{
 			Title: l.Name, Sub: l.Kind, Cover: listHeroCover(l), Total: l.Pages.Total(),
-			OnPlay:    func(i int) { PlayList(h.host.Player(), l, i) },
-			OnShuffle: func() { ShuffleList(h.host.Player(), l, h.host.Post) },
-			OnRefresh: func() { l.Pages.Retry(); l.Pages.At(0); h.host.Invalidate() },
-			Header:    func(c *ui.Context) { h.listHeader(c, l) },
-			Menu:      h.trackMenu,
-			Liked:     h.state.Liked,
-			Favorite:  h.RequestFavorite,
+			OnPlay:         func(i int) { PlayList(h.host.Player(), l, i) },
+			OnShuffle:      func() { ShuffleList(h.host.Player(), l, h.host.Post) },
+			OnRefresh:      func() { l.Pages.Retry(); l.Pages.At(0); h.host.Invalidate() },
+			Header:         func(c *ui.Context) { h.listHeader(c, l) },
+			HeaderSkeleton: func(c *ui.Context) { h.listHeaderSkeleton(c, l) },
+			Menu:           h.trackMenu,
+			Liked:          h.state.Liked,
+			Favorite:       h.RequestFavorite,
 			// Keep the same wide-row album metadata as the archived Feiniu
 			// list; the shared renderer only hides it on narrow windows.
 			ShowAlbum: l.Spec.Kind != ListAlbum && l.Spec.Kind != ListArtist,
 		})
 	} else {
-		h.host.TrackSkeleton(c, true)
+		h.host.TrackSkeleton(c, TrackView{
+			ShowAlbum:      true,
+			HeaderSkeleton: func(c *ui.Context) { h.listHeaderSkeleton(c, l) },
+		})
 	}
+}
+
+// listHeaderSkeleton reserves the whole list header without exposing the
+// labels or actions already known to the page.
+func (h *Home) listHeaderSkeleton(c *ui.Context, l *List) {
+	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 0, 26, 0).Children(func() {
+		h.host.Bone(c, 14).Size(212, 212)
+		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
+			if l == nil || l.HeaderKind != "" && l.HeaderKind != l.Name {
+				h.host.TextBone(c, 12, 1.3).Width(36)
+			}
+			h.host.TextBone(c, 30, 1.2).WidthPercent(48)
+			h.host.TextBone(c, 13, 1.3).Width(180)
+			ui.Row(c).Gap(10).Margin(10, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+				h.host.Bone(c, 18).Size(92, 36)
+				h.host.Bone(c, 18).Size(120, 36)
+				h.host.Bone(c, 17).Size(34, 34)
+			})
+		})
+	})
 }
 
 // listHeroCover is the cover the list's header shows, which the page waits

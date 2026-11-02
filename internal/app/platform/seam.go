@@ -161,18 +161,19 @@ type AccountAction struct {
 }
 
 type TrackView struct {
-	Title     string
-	Sub       string
-	Cover     string
-	Total     int
-	OnPlay    func(int)
-	OnShuffle func()
-	OnRefresh func()
-	Header    func(*ui.Context)
-	Menu      func(*ui.Menu, *netease.Track, int64)
-	Liked     func(int64) bool
-	Favorite  func(netease.Track, bool)
-	ShowAlbum bool
+	Title          string
+	Sub            string
+	Cover          string
+	Total          int
+	OnPlay         func(int)
+	OnShuffle      func()
+	OnRefresh      func()
+	Header         func(*ui.Context)
+	HeaderSkeleton func(*ui.Context)
+	Menu           func(*ui.Menu, *netease.Track, int64)
+	Liked          func(int64) bool
+	Favorite       func(netease.Track, bool)
+	ShowAlbum      bool
 }
 
 type SearchView struct {
@@ -202,6 +203,8 @@ type CardView struct {
 	OnSort  func(string)
 	OnOpen  func(int64)
 	OnPlay  func(int64)
+	// Meta reserves the card's secondary line in its loading skeleton.
+	Meta bool
 	// Art draws the cover of a card that has none, into its square.
 	Art func(p *ui.Painter, r ui.Rect, card *netease.Playlist, radius float32)
 }
@@ -228,16 +231,15 @@ type Host interface {
 	RenderTracks(*ui.Context, *TrackList, TrackView)
 	RenderCards(*ui.Context, *paging.Pager[netease.Playlist], CardView)
 	RenderSearch(*ui.Context, SearchResults, SearchView)
+	TrackSkeleton(*ui.Context, TrackView)
+	CardsSkeleton(*ui.Context, CardView)
+	SearchSkeleton(*ui.Context)
 	// PageList is the scrolling page list under the shared top and player
 	// bars, with the same insets and edge marks as the track list.
 	PageList(c *ui.Context, key string, state *ui.ListState, rows int, row func(int))
 	// TrackRow is one song row of the shared list; view supplies its play,
 	// menu and heart actions.
 	TrackRow(c *ui.Context, index int, tr *netease.Track, view TrackView)
-	// TrackSkeleton stands in for a list page while it loads, as the
-	// upstream lists do: rows of shimmering blocks, under a playlist
-	// header's blocks if header.
-	TrackSkeleton(c *ui.Context, header bool)
 	// Bone and TextBone are blocks of the shared skeleton, shimmering in
 	// step with the page's: one as big as it is laid out, one a line of
 	// text at size.

@@ -85,7 +85,7 @@ func (h *Home) folderContentPage(c *ui.Context, f *folderViewState, folderPath s
 			h.folderMessage(c, "文件夹加载失败，请稍后重试", func() { h.refreshFolder(folderPath) })
 			return
 		}
-		h.host.TrackSkeleton(c, true)
+		h.folderContentSkeleton(c)
 		return
 	}
 	tracks := make([]netease.Track, len(page.Tracks))
@@ -122,6 +122,33 @@ func (h *Home) folderContentPage(c *ui.Context, f *folderViewState, folderPath s
 			Liked:     h.state.Liked,
 			Favorite:  h.RequestFavorite,
 			ShowAlbum: true,
+		})
+	})
+}
+
+func (h *Home) folderContentSkeleton(c *ui.Context) {
+	h.host.TrackSkeleton(c, TrackView{
+		ShowAlbum:      true,
+		HeaderSkeleton: h.folderHeaderSkeleton,
+	})
+}
+
+// folderHeaderSkeleton reserves the breadcrumbs and folder actions without
+// exposing their labels before the folder is ready.
+func (h *Home) folderHeaderSkeleton(c *ui.Context) {
+	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 12, 26, 12).Children(func() {
+		h.host.Bone(c, 14).Size(212, 212)
+		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
+			h.host.TextBone(c, 12, 1.3).Width(120)
+			h.host.TextBone(c, 30, 1.2).WidthPercent(48)
+			h.host.TextBone(c, 13, 1.3).Width(180)
+			ui.Row(c).Gap(10).Margin(10, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+				h.host.Bone(c, 18).Size(92, 36)
+				h.host.Bone(c, 18).Size(120, 36)
+				h.host.Bone(c, 17).Size(34, 34)
+				ui.Box(c).Grow(1)
+				h.host.Bone(c, 15).Height(30).Width(76)
+			})
 		})
 	})
 }
@@ -327,7 +354,7 @@ func (h *Home) folderRootsSkeleton(c *ui.Context) {
 	h.host.PageList(c, "fnmusic-folder-roots-loading", &st, 5, func(i int) {
 		if i == 0 {
 			ui.Column(c).PaddingX(12).Gap(4).Margin(0, 0, 18, 0).Children(func() {
-				ui.Text(c, "文件夹").FontSize(30).FontWeight(700).LetterSpacing(-0.6)
+				h.host.TextBone(c, 30, 1.2).WidthPercent(36)
 				h.host.TextBone(c, 13, 1.3).Width(52)
 			})
 			return
@@ -338,6 +365,10 @@ func (h *Home) folderRootsSkeleton(c *ui.Context) {
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(3).Children(func() {
 				h.host.TextBone(c, 14, 1.3).WidthPercent([]float32{22, 30, 18, 26}[i%4])
 				h.host.TextBone(c, 12.5, 1.3).WidthPercent([]float32{40, 34, 46, 38}[i%4])
+			})
+			ui.Box(c).Size(32, 32)
+			ui.Row(c).Width(44).Justify(ui.End).Children(func() {
+				h.host.TextBone(c, 18, 1.3).Width(10)
 			})
 		})
 	})

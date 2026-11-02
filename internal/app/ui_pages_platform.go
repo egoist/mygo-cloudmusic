@@ -90,7 +90,7 @@ func (a *app) trackRowsProviderOptions(c *ui.Context, total int, get func(int) *
 		i--
 		tr := get(i)
 		if tr == nil {
-			a.pendingTrackRow(c, i)
+			a.pendingTrackRow(c, i, wide, covers, options.ShowAlbum)
 			return
 		}
 		a.providerTrackRow(c, i, tr, cur, pid, wide, covers, options, play)
@@ -186,16 +186,8 @@ func (a *app) providerTrackRow(c *ui.Context, i int, tr *netease.Track, cur *net
 	}
 }
 
-func (a *app) pendingTrackRow(c *ui.Context, i int) {
-	s := a.pageShimmer(c)
-	ui.Row(c.Key(fmt.Sprintf("pending-%d", i))).Height(54).Shrink(0).PaddingX(12).Gap(14).AlignItems(ui.Center).Children(func() {
-		ui.Box(c).Width(26).Center().Children(func() { s.text(c, 13, 1.3).Width(12) })
-		s.bone(c, 6).Size(38, 38)
-		ui.Column(c).Grow(1).Gap(3).Children(func() {
-			s.text(c, 14, 1.3).WidthPercent(boneWidth(i) * 0.8)
-			s.text(c, 12.5, 1.3).WidthPercent(boneWidth(i+5) * 0.55)
-		})
-	})
+func (a *app) pendingTrackRow(c *ui.Context, i int, wide, covers, showAlbum bool) {
+	a.platformTrackRowSkeleton(c.Key(fmt.Sprintf("pending-%d", i)), a.pageShimmer(c), i, wide, covers, showAlbum)
 }
 
 // drawnCard is coverCard for a card whose cover is drawn, not loaded: it

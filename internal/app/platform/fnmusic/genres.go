@@ -28,6 +28,7 @@ func (h *Home) genrePage(c *ui.Context) {
 			{Value: backend.SortGenreNameAsc, Label: "名称"},
 		},
 		Current: current,
+		Meta:    true,
 		OnSort: func(v string) {
 			catalog.GenreSort = v
 			cards.Reload()

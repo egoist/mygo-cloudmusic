@@ -530,6 +530,10 @@ func (h platformHost) RenderTracks(c *ui.Context, l *appplatform.TrackList, view
 		h.a.centered(c, "找不到这个列表", nil)
 		return
 	}
+	if l.Failed != nil && l.Failed() {
+		h.a.centered(c, "加载失败，请稍后重试", l.Retry)
+		return
+	}
 	// At is intentionally called while the list is built. It starts the first
 	// page and leaves the pager state independent from UI rebuilds.
 	if l.Total != nil && l.Total() < 0 {
@@ -539,18 +543,7 @@ func (h platformHost) RenderTracks(c *ui.Context, l *appplatform.TrackList, view
 			h.a.platformArtworkReady(view.Cover, 636)
 		}
 		l.At(0)
-		s := h.a.pageShimmer(c)
-		h.a.trackSkeleton(c, s, true, func(c *ui.Context) {
-			if view.Header != nil {
-				h.a.playlistHeaderSkeleton(c, s)
-			} else {
-				h.a.heading(c, view.Title, view.Sub)
-			}
-		})
-		return
-	}
-	if l.Failed != nil && l.Failed() {
-		h.a.centered(c, "加载失败，请稍后重试", l.Retry)
+		h.a.platformTrackSkeleton(c, view)
 		return
 	}
 	total := l.Len()
@@ -559,13 +552,7 @@ func (h platformHost) RenderTracks(c *ui.Context, l *appplatform.TrackList, view
 		return
 	}
 	if !h.platformHeroReady(c, view.Cover) {
-		h.a.trackSkeleton(c, h.a.pageShimmer(c), true, func(c *ui.Context) {
-			if view.Header != nil {
-				view.Header(c)
-			} else {
-				h.a.heading(c, view.Title, view.Sub)
-			}
-		})
+		h.a.platformTrackSkeleton(c, view)
 		return
 	}
 	h.prefetchTrackArtwork(l, total, c)
@@ -624,6 +611,10 @@ func (h platformHost) prefetchTrackArtwork(l *appplatform.TrackList, total int, 
 	h.a.prefetchPlatformArtwork(urls, 96)
 }
 
+func (h platformHost) CardsSkeleton(c *ui.Context, view appplatform.CardView) {
+	h.a.platformCardsSkeleton(c, view)
+}
+
 func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlist], view appplatform.CardView) {
 	if p == nil {
 		h.a.centered(c, "没有找到相关内容", nil)
@@ -650,13 +641,7 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 			h.a.centered(c, "加载失败，请稍后重试", p.Retry)
 			return
 		}
-		cols, card := h.a.cardWidth(c)
-		top, bottom := h.a.insets(c)
-		h.a.underTop, h.a.underBottom = false, true
-		ui.Scroll(c.Key("platform-cards-loading")).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Children(func() {
-			header(c)
-			h.a.playlistCardsSkeleton(c, h.a.pageShimmer(c), cols*2, card, false)
-		})
+		h.a.platformCardsSkeleton(c, view)
 		return
 	}
 	if p.FailedAt(0) {
@@ -708,7 +693,9 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 			for i := start; i < min(start+size, p.Len()); i++ {
 				pl := p.Peek(i)
 				if pl == nil {
-					ui.Box(c.Key(fmt.Sprintf("platform-card-pending-%d", i))).Width(card).AspectRatio(1)
+					ui.Box(c.Key(fmt.Sprintf("platform-card-pending-%d", i))).Width(card).Children(func() {
+						h.a.platformCardSkeleton(c, h.a.pageShimmer(c), i, view.Meta)
+					})
 					continue
 				}
 				ui.Box(c.Key(fmt.Sprintf("platform-card-wrap-%d", pl.ID))).Width(card).Children(func() {
@@ -740,11 +727,12 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 }
 
 func (h platformHost) TrackRow(c *ui.Context, i int, tr *netease.Track, view appplatform.TrackView) {
+	w, _ := c.Size()
+	wide := w-sidebarWidth > 820
 	if tr == nil {
-		h.a.pendingTrackRow(c, i)
+		h.a.pendingTrackRow(c, i, wide, true, view.ShowAlbum)
 		return
 	}
-	w, _ := c.Size()
 	play := view.OnPlay
 	if play == nil {
 		play = func(int) {}
@@ -754,13 +742,8 @@ func (h platformHost) TrackRow(c *ui.Context, i int, tr *netease.Track, view app
 	}, play)
 }
 
-func (h platformHost) TrackSkeleton(c *ui.Context, header bool) {
-	s := h.a.pageShimmer(c)
-	h.a.trackSkeleton(c, s, true, func(c *ui.Context) {
-		if header {
-			h.a.playlistHeaderSkeleton(c, s)
-		}
-	})
+func (h platformHost) TrackSkeleton(c *ui.Context, view appplatform.TrackView) {
+	h.a.platformTrackSkeleton(c, view)
 }
 
 func (h platformHost) Bone(c *ui.Context, radius float32) ui.Element {
@@ -787,6 +770,18 @@ func (h platformHost) PageList(c *ui.Context, key string, state *ui.ListState, r
 	}).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).ScrollbarInsets(top, 0, bottom, 0)
 }
 
+func (h platformHost) SearchSkeleton(c *ui.Context) {
+	h.a.platformSearchSkeleton(c)
+}
+
+func searchPageLoading(p *paging.Pager[netease.Playlist]) bool {
+	return p != nil && p.Total() < 0 && !p.FailedAt(0)
+}
+
+func searchPageEmpty(p *paging.Pager[netease.Playlist]) bool {
+	return p == nil || p.FailedAt(0) || p.Total() >= 0 && p.Len() == 0
+}
+
 func (h platformHost) RenderSearch(c *ui.Context, s appplatform.SearchResults, view appplatform.SearchView) {
 	if s.Songs == nil {
 		h.a.centered(c, "搜索尚未开始", nil)
@@ -802,17 +797,16 @@ func (h platformHost) RenderSearch(c *ui.Context, s appplatform.SearchResults, v
 	if artists != nil {
 		artists.At(0)
 	}
-	if s.Songs.Total != nil && s.Songs.Total() < 0 {
-		h.a.trackSkeleton(c, h.a.pageShimmer(c), true, func(c *ui.Context) {
-			h.a.heading(c, "“"+s.Query+"”", "搜索")
-		})
-		return
-	}
 	if s.Songs.Failed != nil && s.Songs.Failed() {
 		h.a.centered(c, "加载失败，请稍后重试", s.Songs.Retry)
 		return
 	}
-	if s.Songs.Len() == 0 && (albums == nil || albums.Total() >= 0 && albums.Len() == 0) && (artists == nil || artists.Total() >= 0 && artists.Len() == 0) {
+	songsLoading := s.Songs.Total != nil && s.Songs.Total() < 0
+	if songsLoading || searchPageLoading(albums) || searchPageLoading(artists) {
+		h.a.platformSearchSkeleton(c)
+		return
+	}
+	if s.Songs.Len() == 0 && searchPageEmpty(albums) && searchPageEmpty(artists) {
 		h.a.centered(c, "没有找到相关内容", nil)
 		return
 	}

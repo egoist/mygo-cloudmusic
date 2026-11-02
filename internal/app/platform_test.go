@@ -1,11 +1,15 @@
 package app
 
 import (
+	"errors"
 	"testing"
 
 	appplatform "netease-music-mygo/internal/app/platform"
 	"netease-music-mygo/internal/netease"
 	"netease-music-mygo/internal/platform"
+	"netease-music-mygo/internal/platform/paging"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func newPlatformTestApp() *app {
@@ -71,5 +75,92 @@ func TestPlatformCapabilities(t *testing.T) {
 	}
 	if infos[1].Quality || infos[1].Normalize || infos[1].Podcasts || infos[1].Comments {
 		t.Fatalf("Feiniu capabilities = %#v", infos[1])
+	}
+}
+
+// A detail page waiting for its hero keeps every real label behind the same full skeleton.
+func TestPlatformHeroWaitKeepsFullSkeleton(t *testing.T) {
+	a := newTestApp()
+	a.art.fetch = func(string) ([]byte, error) { return nil, errors.New("not ready") }
+	track := netease.Track{ID: 1, Name: "真实歌曲"}
+	list := &appplatform.TrackList{
+		Total: func() int { return 1 },
+		Len:   func() int { return 1 },
+		At:    func(int) *netease.Track { return &track },
+	}
+	view := appplatform.TrackView{
+		Cover: "fnmusic://cover",
+		Header: func(c *ui.Context) {
+			ui.Text(c, "真实标题")
+		},
+		HeaderSkeleton: func(c *ui.Context) {
+			a.playlistHeaderSkeleton(c, a.pageShimmer(c))
+		},
+		ShowAlbum: true,
+	}
+	h := platformHost{a: a}
+	tt := ui.NewTester(func(c *ui.Context) {
+		t := *c.Theme()
+		a.pal = paletteFor(&t)
+		h.RenderTracks(c, list, view)
+	}, 1200, 800)
+	tt.Frame()
+	if tt.HasText("真实标题") || tt.HasText("真实歌曲") {
+		t.Fatal("real content showed through the hero-loading skeleton")
+	}
+}
+
+// Search keeps loaded songs behind its full skeleton until album and artist results settle.
+func TestPlatformSearchWaitsForAllFirstPages(t *testing.T) {
+	a := newTestApp()
+	track := netease.Track{ID: 1, Name: "真实歌曲"}
+	songs := &appplatform.TrackList{
+		Total: func() int { return 1 },
+		Len:   func() int { return 1 },
+		At:    func(int) *netease.Track { return &track },
+	}
+	albums := paging.New[netease.Playlist](60, 0, nil, nil)
+	artists := paging.New[netease.Playlist](60, 0, nil, nil)
+	h := platformHost{a: a}
+	results := appplatform.SearchResults{Query: "春日影", Songs: songs, Albums: albums, Artists: artists}
+	tt := ui.NewTester(func(c *ui.Context) {
+		t := *c.Theme()
+		a.pal = paletteFor(&t)
+		h.RenderSearch(c, results, appplatform.SearchView{})
+	}, 1200, 800)
+	tt.Frame()
+	if tt.HasText("真实歌曲") || tt.HasText("“春日影”") {
+		t.Fatal("search revealed content before its first pages settled")
+	}
+	albums.Land(0, nil, 0)
+	tt.Frame()
+	if tt.HasText("真实歌曲") {
+		t.Fatal("search revealed songs while artists were still loading")
+	}
+	artists.Land(0, nil, 0)
+	tt.Frame()
+	if !tt.HasText("真实歌曲") || !tt.HasText("“春日影”") {
+		t.Fatal("search did not reveal its results after every first page settled")
+	}
+}
+
+// A failed first list page shows its retry state instead of a permanent skeleton.
+func TestPlatformListFailureLeavesSkeleton(t *testing.T) {
+	a := newTestApp()
+	list := &appplatform.TrackList{
+		Total:  func() int { return -1 },
+		Len:    func() int { return 0 },
+		At:     func(int) *netease.Track { return nil },
+		Failed: func() bool { return true },
+	}
+	h := platformHost{a: a}
+	tt := ui.NewTester(func(c *ui.Context) {
+		t := *c.Theme()
+		a.pal = paletteFor(&t)
+		h.RenderTracks(c, list, appplatform.TrackView{ShowAlbum: true})
+	}, 1200, 800)
+	tt.Frame()
+	if !tt.HasText("加载失败，请稍后重试") {
+		t.Fatal("failed list remained behind its loading skeleton")
 	}
 }

@@ -7,6 +7,14 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func (h *Home) roamSkeleton(c *ui.Context) {
+	ui.Column(c).Fill().Padding(40, 40, 100, 40).Gap(12).Children(func() {
+		h.host.TextBone(c, 30, 1.2).Width(90)
+		h.host.TextBone(c, 14, 1.3).WidthPercent(58)
+		h.host.Bone(c, 18).Size(112, 36)
+	})
+}
+
 func (h *Home) roamPage(c *ui.Context) {
 	t := c.Theme()
 	player := h.host.Player()

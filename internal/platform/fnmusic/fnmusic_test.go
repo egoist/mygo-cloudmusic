@@ -26,8 +26,8 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
-// Feiniu cover downloads are capped at 240px before shared artwork handling,
-// even when the service returns its original 640px image.
+// Small Feiniu cover downloads are capped at 240px before shared artwork
+// handling, even when the service returns its original 640px image.
 func TestCapCover(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 640, 480))
 	var encoded bytes.Buffer
@@ -45,6 +45,71 @@ func TestCapCover(t *testing.T) {
 	if got := img.Bounds().Size(); got.X != 240 || got.Y != 180 {
 		t.Fatalf("capped cover=%v, want 240x180", got)
 	}
+}
+
+// Large Feiniu covers omit the size hint and keep the service's original
+// image, while small covers ask for and return the bounded 240px form.
+func TestCoverModes(t *testing.T) {
+	var source bytes.Buffer
+	if err := png.Encode(&source, image.NewRGBA(image.Rect(0, 0, 640, 640))); err != nil {
+		t.Fatal(err)
+	}
+	s := &coverServer{server: server{}, source: source.Bytes()}
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+	c, err := New(Config{Address: ts.URL, Username: "me", PassHash: HashPassword("secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sizes := []int{240, 600}
+	wants := []int{240, 640}
+	for i, size := range sizes {
+		data, err := c.Cover("cover", size)
+		if err != nil {
+			t.Fatalf("size %d: %v", size, err)
+		}
+		img, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("size %d decode: %v", size, err)
+		}
+		if got := img.Bounds().Dx(); got != wants[i] {
+			t.Errorf("size %d decoded width %d, want %d", size, got, wants[i])
+		}
+		if size > coverCompressedSize && !bytes.Equal(data, s.source) {
+			t.Errorf("size %d changed the original large-cover bytes", size)
+		}
+	}
+
+	if got := s.queries; len(got) != len(sizes) {
+		t.Fatalf("cover requests %d, want %d", len(got), len(sizes))
+	}
+	if got := s.queries[0].Get("size"); got != "240" {
+		t.Errorf("small cover size query %q, want 240", got)
+	}
+	if got := s.queries[1].Get("size"); got != "" {
+		t.Errorf("large cover size query %q, want omitted", got)
+	}
+}
+
+type coverServer struct {
+	server
+	mu      sync.Mutex
+	queries []url.Values
+	source  []byte
+}
+
+func (s *coverServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimPrefix(r.URL.Path, "/music/api/v1") == "/static/cover" {
+		s.mu.Lock()
+		s.queries = append(s.queries, r.URL.Query())
+		s.mu.Unlock()
+
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(s.source)
+		return
+	}
+	s.server.ServeHTTP(w, r)
 }
 
 // The service may be mounted anywhere a reverse proxy puts it, and is under

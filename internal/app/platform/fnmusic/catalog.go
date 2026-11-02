@@ -28,6 +28,7 @@ const (
 	ListAlbum     ListKind = "album"
 	ListArtist    ListKind = "artist"
 	ListSearch    ListKind = "search"
+	ListGenre     ListKind = "genre"
 )
 
 // Spec identifies a service list without referring to a root app route.
@@ -90,8 +91,9 @@ type Catalog struct {
 	Meta                               map[int64]netease.Playlist
 	SearchList                         *List
 	SearchAlbums, SearchArtists        *paging.Pager[netease.Playlist]
-	Albums, Artists                    *paging.Pager[netease.Playlist]
+	Albums, Artists, Genres            *paging.Pager[netease.Playlist]
 	AlbumSort, ArtistSort, LibrarySort string
+	GenreSort, GenreTrackSort          string
 }
 
 // NewCatalog creates empty platform catalog state.
@@ -183,6 +185,20 @@ func (c *Catalog) NewList(spec Spec) *List {
 	case ListPlaylist:
 		l.Kind, l.HeaderKind = "歌单", "歌单"
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.PlaylistPage(spec.Ref, page, size) })
+	case ListGenre:
+		sort := fnmusic.ParseGenreTrackSort(spec.Sort)
+		l.Kind, l.HeaderKind = fnmusic.KindGenre, "风格"
+		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) {
+			res, err := client.GenreTracksPage(spec.Ref, sort, page, size)
+			if err != nil {
+				return nil, 0, err
+			}
+			tracks := make([]netease.Track, len(res.List))
+			for i, item := range res.List {
+				tracks[i] = item.Track
+			}
+			return tracks, res.Total, nil
+		})
 	case ListSearch:
 		l.Kind, l.HeaderKind, l.Name = "搜索", "搜索", spec.Query
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.SearchPage(spec.Query, page, size) })
@@ -207,6 +223,8 @@ func listID(spec Spec) int64 {
 		return fnmusic.ArtistID(spec.Ref)
 	case ListPlaylist:
 		return fnmusic.ID(spec.Ref)
+	case ListGenre:
+		return fnmusic.GenreID(spec.Ref)
 	default:
 		return -3
 	}
@@ -267,6 +285,8 @@ func (c *Catalog) ListForRoute(id int64, kind, ref string) *List {
 			spec.Kind = ListAlbum
 		case fnmusic.KindArtist:
 			spec.Kind = ListArtist
+		case fnmusic.KindGenre:
+			spec.Kind, spec.Sort = ListGenre, c.GenreTrackSort
 		default:
 			spec.Kind = ListPlaylist
 		}
@@ -329,4 +349,26 @@ func (c *Catalog) ArtistsList() *paging.Pager[netease.Playlist] {
 		}))
 	}
 	return c.Artists
+}
+
+// GenresList is the style cards, in the order of GenreSort.
+func (c *Catalog) GenresList() *paging.Pager[netease.Playlist] {
+	if c.Genres == nil && c.Session != nil && c.Session.Client() != nil {
+		client := c.Session.Client()
+		_, gen, _ := c.Session.activeClient(context.Background())
+		c.Genres = c.cardPager(c.cardFetch(client, gen, func(page int) ([]netease.Playlist, int, error) {
+			res, err := client.GenresPage(fnmusic.ParseGenreSort(c.GenreSort), page, CardsPage)
+			if err != nil {
+				return nil, 0, err
+			}
+			cards := make([]netease.Playlist, 0, len(res.List))
+			for _, g := range res.List {
+				if g.GUID != "" {
+					cards = append(cards, g.Card())
+				}
+			}
+			return cards, res.Total, nil
+		}))
+	}
+	return c.Genres
 }

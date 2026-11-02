@@ -640,8 +640,10 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				default:
 					p.err = "这首歌需要 VIP 才能播放"
 				}
-				// Skip what cannot play, unless nothing in the queue can.
-				if skipped+1 < len(p.order) {
+				// Skip what cannot play, unless nothing in the queue can, or
+				// a few in a row could not: a NAS gone away fails every
+				// song, which then flew by one after another.
+				if skipped+1 < min(len(p.order), maxSkipped) {
 					next := at + 1
 					if next >= len(p.order) {
 						next = 0

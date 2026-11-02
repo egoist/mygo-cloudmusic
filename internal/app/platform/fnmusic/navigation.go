@@ -35,6 +35,10 @@ func (h *Home) Sidebar(c *ui.Context) {
 			h.host.NavItem(c, iconServer, "连接飞牛音乐", Route{Page: PageLibrary})
 		} else {
 			h.host.NavItem(c, iconNote, "音乐库", Route{Page: PageLibrary})
+			if h.state.FolderViewEnabled() {
+				h.host.NavItem(c, iconFolder, "文件夹", Route{Page: PageFolders})
+			}
+			h.host.NavItem(c, iconGenre, "风格", Route{Page: PageGenres})
 			h.host.NavItem(c, iconAlbum, "专辑", Route{Page: PageAlbums})
 			h.host.NavItem(c, iconUser, "歌手", Route{Page: PageArtists})
 			h.host.NavItem(c, iconHeart, "我喜欢", Route{Page: PagePlaylist, ID: backend.FavoritesID})
@@ -91,11 +95,21 @@ func (h *Home) Sidebar(c *ui.Context) {
 // connection and playlist request are in flight. Showing the connect CTA here
 // made the sidebar flash to a different navigation tree on every launch.
 func (h *Home) sidebarLoading(c *ui.Context) {
-	t := c.Theme()
-	for i := 0; i < 5; i++ {
+	// As many as the connected sidebar has, so it does not grow once in.
+	for i, w := range []float32{56, 44, 36, 36, 36, 52, 64, 36} {
 		ui.Row(c.Key(fmt.Sprintf("fnmusic-nav-loading-%d", i))).Height(34).PaddingX(10).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(17, 17).Radius(5).Background(t.TextMuted.Alpha(0.16))
-			ui.Box(c).Height(12).Width(72 + float32(i%3)*20).Radius(6).Background(t.TextMuted.Alpha(0.16))
+			h.host.Bone(c, 5).Size(17, 17)
+			h.host.TextBone(c, 13.5, 1.3).Width(w)
+		})
+	}
+	// The playlists' heading, and a few of them.
+	ui.Row(c.Key("fnmusic-nav-loading-lists")).Height(30).PaddingX(10).Margin(14, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+		h.host.TextBone(c, 12, 1.3).Width(48)
+	})
+	for i, w := range []float32{88, 64, 104} {
+		ui.Row(c.Key(fmt.Sprintf("fnmusic-nav-loading-list-%d", i))).Height(40).PaddingX(10).Gap(10).AlignItems(ui.Center).Children(func() {
+			h.host.Bone(c, 6).Size(28, 28)
+			h.host.TextBone(c, 13, 1.3).Width(w)
 		})
 	}
 }

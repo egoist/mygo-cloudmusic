@@ -15,6 +15,8 @@ const (
 	PageArtists       Page = "artists"
 	PagePlaylist      Page = "playlist"
 	PageRoam          Page = "roam"
+	PageFolders       Page = "folders"
+	PageGenres        Page = "genres"
 )
 
 // Route is the small navigation value exchanged between a platform view and

@@ -11,7 +11,13 @@ import (
 func (h *Home) listHeader(c *ui.Context, l *List) {
 	t := c.Theme()
 	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 0, 26, 0).Children(func() {
-		h.host.Cover(c, l.Cover(), 212, 14).Shadow(0, 18, 40, -10, ui.RGBA(0, 0, 0, 0.24))
+		if l.Spec.Kind == ListGenre && l.CoverURL == "" {
+			// A style has no cover; its own art stands for it, not its
+			// first song's.
+			genreArt(c, l.Name, 212, 14).Shadow(0, 18, 40, -10, ui.RGBA(0, 0, 0, 0.24))
+		} else {
+			h.host.Cover(c, l.Cover(), 212, 14).Shadow(0, 18, 40, -10, ui.RGBA(0, 0, 0, 0.24))
+		}
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
 			if l.HeaderKind != "" && l.HeaderKind != l.Name {
 				ui.Text(c, l.HeaderKind).FontSize(12).FontWeight(600).TextColor(t.Accent)
@@ -51,7 +57,7 @@ func (h *Home) listPage(c *ui.Context) {
 	}
 	if l != nil && l.Pages != nil {
 		h.host.RenderTracks(c, l.View(), TrackView{
-			Title: l.Name, Sub: l.Kind, Cover: l.Cover(), Total: l.Pages.Total(),
+			Title: l.Name, Sub: l.Kind, Cover: listHeroCover(l), Total: l.Pages.Total(),
 			OnPlay:    func(i int) { PlayList(h.host.Player(), l, i) },
 			OnShuffle: func() { ShuffleList(h.host.Player(), l, h.host.Post) },
 			OnRefresh: func() { l.Pages.Retry(); l.Pages.At(0); h.host.Invalidate() },
@@ -64,9 +70,15 @@ func (h *Home) listPage(c *ui.Context) {
 			ShowAlbum: l.Spec.Kind != ListAlbum && l.Spec.Kind != ListArtist,
 		})
 	} else {
-		ui.Column(c).Fill().Center().Gap(8).Children(func() {
-			ui.Text(c, "正在准备列表…").FontSize(15)
-			ui.Text(c, "请稍候").FontSize(12).TextColor(c.Theme().TextMuted)
-		})
+		h.host.TrackSkeleton(c, true)
 	}
+}
+
+// listHeroCover is the cover the list's header shows, which the page waits
+// a moment for; a style's drawn art needs no waiting.
+func listHeroCover(l *List) string {
+	if l.Spec.Kind == ListGenre && l.CoverURL == "" {
+		return ""
+	}
+	return l.Cover()
 }

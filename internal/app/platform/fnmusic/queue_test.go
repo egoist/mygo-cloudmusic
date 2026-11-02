@@ -32,6 +32,7 @@ type queuePlayer struct {
 
 func (p *queuePlayer) Current() *netease.Track        { return nil }
 func (p *queuePlayer) PlayQueue([]netease.Track, int) {}
+func (p *queuePlayer) AppendQueue([]netease.Track)    {}
 func (p *queuePlayer) PlayList(ts []netease.Track, at int, f func(func([]netease.Track))) {
 	p.tracks, p.at, p.feed = ts, at, f
 	if p.ready != nil {

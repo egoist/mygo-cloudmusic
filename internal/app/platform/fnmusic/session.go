@@ -60,6 +60,15 @@ func (s *State) Connect(ctx context.Context, cfg backend.Config) error {
 		c.Logout()
 		return context.Canceled
 	}
+	// Capability discovery is optional for older servers. A failed probe keeps
+	// the account connected and leaves optional platform pages hidden. Preserve
+	// cancellation so callers can stop a connect cleanly.
+	if _, err := s.LoadCapabilities(ctx); errors.Is(err, context.Canceled) {
+		if old := s.Detach(); old != nil {
+			old.Logout()
+		}
+		return err
+	}
 	return nil
 }
 

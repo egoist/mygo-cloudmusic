@@ -79,7 +79,10 @@ func (h *Home) listMenu(m *ui.Menu, l *List) {
 		h.playlistMenu(m, pl)
 		m.Separator()
 	}
-	if l.Spec.Kind == ListAlbum || l.Spec.Kind == ListArtist {
+	if l.Spec.Kind == ListGenre {
+		h.genreSortMenu(m, l)
+	}
+	if l.Spec.Kind == ListAlbum || l.Spec.Kind == ListArtist || l.Spec.Kind == ListGenre {
 		m.Submenu("全部添加到歌单", func(sub *ui.Menu) {
 			if sub.Item("新建歌单…").Chosen() {
 				h.RequestNewPlaylistFrom(l)

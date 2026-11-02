@@ -39,6 +39,7 @@ type Home struct {
 	delete                              *netease.Playlist
 	addTracks                           []netease.Track
 	addList                             *List
+	folders                             *folderViewState
 }
 
 func (h *Home) postCurrent(gen uint64, fn func()) {
@@ -62,6 +63,7 @@ func NewHome(state *State, host Host, runtimes ...appplatform.Runtime) *Home {
 		runtime = NewRuntime(state, nil)
 	}
 	h := &Home{state: state, host: host, runtime: runtime, route: Route{Page: PageLibrary}}
+	h.folders = newFolderViewState(h)
 	if state != nil {
 		cfg := toConnectionConfig(state.Config())
 		h.formAddress, h.formUser, h.formCode = cfg.Address, cfg.Username, cfg.AccessCode
@@ -161,18 +163,20 @@ func (h *Home) Content(c *ui.Context) {
 		h.cardsPage(c)
 	case PageRoam:
 		h.roamPage(c)
+	case PageFolders:
+		h.folderPage(c)
+	case PageGenres:
+		h.genrePage(c)
 	default:
 		h.listPage(c)
 	}
 	h.dialogs(c)
 }
 
+// connectionLoading is the library's page while the session connects, as
+// its blocks: the page it lands on, in place, with nothing moving after.
 func (h *Home) connectionLoading(c *ui.Context) {
-	t := c.Theme()
-	ui.Column(c).Fill().Center().Gap(12).Children(func() {
-		ui.Spinner(c).Label("正在连接飞牛音乐")
-		ui.Text(c, "正在加载音乐库和歌单…").FontSize(13).TextColor(t.TextMuted)
-	})
+	h.host.TrackSkeleton(c, true)
 }
 
 func (h *Home) RequestFavorite(tr netease.Track, liked bool) {

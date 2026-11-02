@@ -581,9 +581,20 @@ func (c *Client) mediaHeader(q url.Values) http.Header {
 	return req.Header
 }
 
-// Cover returns the picture of a cover, size pixels across.
+const coverCompressedSize = 240
+
+// Cover returns a cover in one of two forms. Requests at or below
+// coverCompressedSize use the bounded small-cover form; larger requests keep
+// the original bytes returned by the service so hero covers and backdrops do
+// not get enlarged from a 240px bitmap.
 func (c *Client) Cover(id string, size int) ([]byte, error) {
-	q := url.Values{"coverId": {id}, "size": {strconv.Itoa(max(64, min(size, 2048)))}}
+	compressed := size <= coverCompressedSize
+	q := url.Values{"coverId": {id}}
+	if compressed {
+		// The service may ignore this hint and return its original image; the
+		// client-side cap below keeps the small-cover form bounded regardless.
+		q.Set("size", strconv.Itoa(coverCompressedSize))
+	}
 	for retry := false; ; retry = true {
 		token, err := c.session()
 		if err != nil {
@@ -618,14 +629,18 @@ func (c *Client) Cover(id string, size int) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return capCover(b, 240)
+		if compressed {
+			return capCover(b, coverCompressedSize)
+		}
+		return b, nil
 	}
 }
 
 // capCover keeps Feiniu's cover payloads bounded at the size used by the
-// upstream wall. The service may return its original 640px image even when a
+// small-cover form. The service may return its original image even when a
 // smaller size was requested, so normalize it at the platform adapter
-// boundary before the shared artwork code sees it.
+// boundary before the shared artwork code sees it. Large-cover requests do
+// not call this function and retain the service's original bytes.
 func capCover(data []byte, maxSize int) ([]byte, error) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {

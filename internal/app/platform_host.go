@@ -539,8 +539,13 @@ func (h platformHost) RenderTracks(c *ui.Context, l *appplatform.TrackList, view
 			h.a.platformArtworkReady(view.Cover, 636)
 		}
 		l.At(0)
-		h.a.trackSkeleton(c, h.a.pageShimmer(c), true, func(c *ui.Context) {
-			h.a.heading(c, view.Title, view.Sub)
+		s := h.a.pageShimmer(c)
+		h.a.trackSkeleton(c, s, true, func(c *ui.Context) {
+			if view.Header != nil {
+				h.a.playlistHeaderSkeleton(c, s)
+			} else {
+				h.a.heading(c, view.Title, view.Sub)
+			}
 		})
 		return
 	}
@@ -650,7 +655,7 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 		h.a.underTop, h.a.underBottom = false, true
 		ui.Scroll(c.Key("platform-cards-loading")).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Children(func() {
 			header(c)
-			h.a.playlistCardsSkeleton(c, h.a.pageShimmer(c), cols, card, false)
+			h.a.playlistCardsSkeleton(c, h.a.pageShimmer(c), cols*2, card, false)
 		})
 		return
 	}
@@ -707,11 +712,22 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 					continue
 				}
 				ui.Box(c.Key(fmt.Sprintf("platform-card-wrap-%d", pl.ID))).Width(card).Children(func() {
-					if h.a.coverCard(c.Key(fmt.Sprintf("platform-card-%d", pl.ID)), pl.Name, pl.Cover(), pl.PlayCount, pl.UpdateFreq, func() {
+					play := func() {
 						if view.OnPlay != nil {
 							view.OnPlay(pl.ID)
 						}
-					}) && view.OnOpen != nil {
+					}
+					key := c.Key(fmt.Sprintf("platform-card-%d", pl.ID))
+					var open bool
+					if pl.Cover() == "" && view.Art != nil {
+						card := *pl
+						open = h.a.drawnCard(key, pl.Name, pl.UpdateFreq, func(p *ui.Painter, r ui.Rect, radius float32) {
+							view.Art(p, r, &card, radius)
+						}, play)
+					} else {
+						open = h.a.coverCard(key, pl.Name, pl.Cover(), pl.PlayCount, pl.UpdateFreq, play)
+					}
+					if open && view.OnOpen != nil {
 						view.OnOpen(pl.ID)
 					}
 				})
@@ -721,6 +737,54 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 			defer h.a.endMark(c)
 		}
 	}).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0)
+}
+
+func (h platformHost) TrackRow(c *ui.Context, i int, tr *netease.Track, view appplatform.TrackView) {
+	if tr == nil {
+		h.a.pendingTrackRow(c, i)
+		return
+	}
+	w, _ := c.Size()
+	play := view.OnPlay
+	if play == nil {
+		play = func(int) {}
+	}
+	h.a.providerTrackRow(c, i, tr, h.a.pl.Current(), 0, w-sidebarWidth > 820, true, trackRowsOptions{
+		Menu: view.Menu, Liked: view.Liked, Favorite: view.Favorite, ShowAlbum: view.ShowAlbum,
+	}, play)
+}
+
+func (h platformHost) TrackSkeleton(c *ui.Context, header bool) {
+	s := h.a.pageShimmer(c)
+	h.a.trackSkeleton(c, s, true, func(c *ui.Context) {
+		if header {
+			h.a.playlistHeaderSkeleton(c, s)
+		}
+	})
+}
+
+func (h platformHost) Bone(c *ui.Context, radius float32) ui.Element {
+	return h.a.pageShimmer(c).bone(c, radius)
+}
+
+func (h platformHost) TextBone(c *ui.Context, size, lineHeight float32) ui.Element {
+	return h.a.pageShimmer(c).text(c, size, lineHeight)
+}
+
+func (h platformHost) PageList(c *ui.Context, key string, state *ui.ListState, rows int, row func(int)) {
+	top, bottom := h.a.insets(c)
+	h.a.underTop, h.a.underBottom = true, true
+	ui.List(c.Key(key), state, rows, func(i int) {
+		ui.Column(c).Children(func() {
+			if i == 0 {
+				h.a.startMark(c)
+			}
+			row(i)
+			if i == rows-1 {
+				h.a.endMark(c)
+			}
+		})
+	}).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).ScrollbarInsets(top, 0, bottom, 0)
 }
 
 func (h platformHost) RenderSearch(c *ui.Context, s appplatform.SearchResults, view appplatform.SearchView) {
@@ -837,6 +901,7 @@ type sharedPlayer struct {
 	p interface {
 		Current() *netease.Track
 		PlayQueue([]netease.Track, int)
+		AppendQueue([]netease.Track)
 		PlayList([]netease.Track, int, func(func([]netease.Track)))
 		PlayRadio(string, []netease.Track, func(func([]netease.Track)))
 		EndRadio()
@@ -848,6 +913,7 @@ type sharedPlayer struct {
 
 func (p sharedPlayer) Current() *netease.Track            { return p.p.Current() }
 func (p sharedPlayer) PlayQueue(t []netease.Track, i int) { p.p.PlayQueue(t, i) }
+func (p sharedPlayer) AppendQueue(t []netease.Track)      { p.p.AppendQueue(t) }
 func (p sharedPlayer) PlayList(t []netease.Track, i int, f func(func([]netease.Track))) {
 	p.p.PlayList(t, i, f)
 }

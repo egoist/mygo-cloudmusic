@@ -63,13 +63,16 @@ type rawTrack struct {
 	IsCue    bool   `json:"isCue"`
 	// StartTime and EndTime, in seconds, say where in its file a track of a
 	// CUE sheet is.
-	StartTime    float64 `json:"startTime"`
-	EndTime      float64 `json:"endTime"`
-	CueStartTime float64 `json:"cueStartTime"`
-	CueEndTime   float64 `json:"cueEndTime"`
-	TrackNo      int     `json:"trackNo"`
-	DiscNo       int     `json:"discNo"`
-	Favorite     bool    `json:"isFavorite"`
+	StartTime      float64 `json:"startTime"`
+	EndTime        float64 `json:"endTime"`
+	CueStartTime   float64 `json:"cueStartTime"`
+	CueEndTime     float64 `json:"cueEndTime"`
+	TrackNo        int     `json:"trackNo"`
+	DiscNo         int     `json:"discNo"`
+	Favorite       bool    `json:"isFavorite"`
+	IsAdminDeleted bool    `json:"isAdminDeleted"`
+	CreatedAt      int64   `json:"createdAt"`
+	UpdatedAt      int64   `json:"updatedAt"`
 	// Format and Path are where a file's kind shows, if its audio spec
 	// does not say.
 	Format    string `json:"format"`
@@ -82,6 +85,7 @@ type rawTrack struct {
 		Container string `json:"container"`
 		Codec     string `json:"codec"`
 		Path      string `json:"path"`
+		Size      int64  `json:"size"`
 	} `json:"audioSpec"`
 }
 

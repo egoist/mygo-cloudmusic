@@ -7,6 +7,10 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
+// maxSkipped is how many songs that cannot play in a row stop the player,
+// with the last one's error shown.
+const maxSkipped = 3
+
 // AudioStream is the player-owned decoded stream contract exposed to platform
 // adapters that supply a decoder. Its source method remains private to this
 // package, so external adapters can only receive and close the stream.
@@ -51,6 +55,17 @@ func (p *Player) PlayList(tracks []netease.Track, start int, more func(func([]ne
 	p.PlayQueue(tracks, start)
 	p.feed = more
 	p.refill()
+}
+
+// AppendQueue adds songs to the current queue without replacing what is
+// playing. Duplicate song IDs are ignored, just as radio refills are.
+func (p *Player) AppendQueue(tracks []netease.Track) {
+	if p == nil || len(tracks) == 0 {
+		return
+	}
+	p.EndRadio()
+	p.appendTracks(tracks)
+	p.sync()
 }
 
 // Reset stops playback and drops the complete playback context. It is used

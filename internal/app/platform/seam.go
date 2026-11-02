@@ -124,6 +124,7 @@ type Route struct {
 type PlayerPort interface {
 	Current() *netease.Track
 	PlayQueue([]netease.Track, int)
+	AppendQueue([]netease.Track)
 	PlayList([]netease.Track, int, func(func([]netease.Track)))
 	PlayRadio(string, []netease.Track, func(func([]netease.Track)))
 	EndRadio()
@@ -201,6 +202,8 @@ type CardView struct {
 	OnSort  func(string)
 	OnOpen  func(int64)
 	OnPlay  func(int64)
+	// Art draws the cover of a card that has none, into its square.
+	Art func(p *ui.Painter, r ui.Rect, card *netease.Playlist, radius float32)
 }
 
 type SortChoice struct{ Value, Label string }
@@ -225,6 +228,21 @@ type Host interface {
 	RenderTracks(*ui.Context, *TrackList, TrackView)
 	RenderCards(*ui.Context, *paging.Pager[netease.Playlist], CardView)
 	RenderSearch(*ui.Context, SearchResults, SearchView)
+	// PageList is the scrolling page list under the shared top and player
+	// bars, with the same insets and edge marks as the track list.
+	PageList(c *ui.Context, key string, state *ui.ListState, rows int, row func(int))
+	// TrackRow is one song row of the shared list; view supplies its play,
+	// menu and heart actions.
+	TrackRow(c *ui.Context, index int, tr *netease.Track, view TrackView)
+	// TrackSkeleton stands in for a list page while it loads, as the
+	// upstream lists do: rows of shimmering blocks, under a playlist
+	// header's blocks if header.
+	TrackSkeleton(c *ui.Context, header bool)
+	// Bone and TextBone are blocks of the shared skeleton, shimmering in
+	// step with the page's: one as big as it is laid out, one a line of
+	// text at size.
+	Bone(c *ui.Context, radius float32) ui.Element
+	TextBone(c *ui.Context, size, lineHeight float32) ui.Element
 	Cover(*ui.Context, string, float32, float32) ui.Element
 	PillButton(*ui.Context, string, *ui.SVG, string, bool) ui.Element
 	MoreButton(*ui.Context, string, func(*ui.Menu)) ui.Element

@@ -22,18 +22,20 @@ import (
 type State struct {
 	mu sync.RWMutex
 
-	client     *backend.Client
-	provider   *backend.Provider
-	config     backend.Config
-	connectGen uint64
-	connecting bool
-	post       func(func())
-	err        error
-	playlists  []netease.Playlist
-	liked      map[int64]bool
-	likeBusy   map[int64]bool
-	roamID     string
-	catalog    *Catalog
+	client            *backend.Client
+	provider          *backend.Provider
+	config            backend.Config
+	connectGen        uint64
+	connecting        bool
+	capabilities      backend.FolderCapabilities
+	capabilitiesKnown bool
+	post              func(func())
+	err               error
+	playlists         []netease.Playlist
+	liked             map[int64]bool
+	likeBusy          map[int64]bool
+	roamID            string
+	catalog           *Catalog
 }
 
 // NewState returns an empty disconnected platform session.
@@ -285,11 +287,44 @@ func (s *State) attachLocked(client *backend.Client) {
 	s.provider = backend.Wrap(client)
 	s.config = client.Config()
 	s.err = nil
+	s.capabilities = backend.FolderCapabilities{}
+	s.capabilitiesKnown = false
 	s.playlists = nil
 	s.roamID = ""
 	s.catalog = NewCatalog(s, s.post)
 	s.liked = make(map[int64]bool)
 	s.likeBusy = make(map[int64]bool)
+}
+
+// FolderViewEnabled reports the server capability after a successful
+// connection. Unknown capabilities are treated as unavailable so older
+// Feiniu Music versions do not expose a broken route.
+func (s *State) FolderViewEnabled() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.capabilitiesKnown && s.capabilities.FolderView
+}
+
+// LoadCapabilities reads optional server capabilities for this session.
+func (s *State) LoadCapabilities(ctx context.Context) (backend.FolderCapabilities, error) {
+	c, gen, err := s.activeClient(ctx)
+	if err != nil {
+		return backend.FolderCapabilities{}, err
+	}
+	caps, err := c.Capabilities()
+	if err != nil {
+		return backend.FolderCapabilities{}, err
+	}
+	if !s.clientCurrent(c, gen) {
+		return backend.FolderCapabilities{}, context.Canceled
+	}
+	s.mu.Lock()
+	s.capabilities, s.capabilitiesKnown = caps, true
+	s.mu.Unlock()
+	return caps, nil
 }
 
 // Detach clears the active session and returns its client for logout. The
@@ -302,6 +337,7 @@ func (s *State) Detach() *backend.Client {
 	client := s.client
 	s.connectGen++
 	s.client, s.provider, s.err = nil, nil, nil
+	s.capabilities, s.capabilitiesKnown = backend.FolderCapabilities{}, false
 	s.connecting = false
 	s.config = backend.Config{}
 	s.playlists = nil

@@ -55,12 +55,12 @@ func (c *Client) tracks(path string, q url.Values, pg, size int) ([]netease.Trac
 
 // LibraryPage returns a page of the library's songs.
 func (c *Client) LibraryPage(sort string, pg, size int) ([]netease.Track, int, error) {
-	return c.tracks("/track/list", url.Values{"sort": {sort}}, pg, size)
+	return c.tracks("/track/list", url.Values{"sort": {LibrarySortPolicy.Normalize(sort)}}, pg, size)
 }
 
 // FavoritesPage returns a page of the songs the listener likes.
-func (c *Client) FavoritesPage(pg, size int) ([]netease.Track, int, error) {
-	return c.tracks("/favorite-track/list", nil, pg, size)
+func (c *Client) FavoritesPage(sort string, pg, size int) ([]netease.Track, int, error) {
+	return c.tracks("/favorite-track/list", url.Values{"sort": {FavoriteSortPolicy.Normalize(sort)}}, pg, size)
 }
 
 // PlaylistPage returns a page of the songs of a playlist.
@@ -68,15 +68,20 @@ func (c *Client) PlaylistPage(ref string, pg, size int) ([]netease.Track, int, e
 	return c.tracks("/track/playlist-detail/list", url.Values{"playlistGUID": {ref}}, pg, size)
 }
 
-// AlbumPage returns a page of the songs of an album, in the order of its
-// disc.
-func (c *Client) AlbumPage(ref string, pg, size int) ([]netease.Track, int, error) {
-	return c.tracks("/track/album-detail/list", url.Values{"albumGUID": {ref}}, pg, size)
+// AlbumPage returns a page of the songs of an album, in the requested order.
+func (c *Client) AlbumPage(ref, sort string, pg, size int) ([]netease.Track, int, error) {
+	return c.tracks("/track/album-detail/list", url.Values{
+		"albumGUID": {ref},
+		"sort":      {AlbumTrackSortPolicy.Normalize(sort)},
+	}, pg, size)
 }
 
 // ArtistPage returns a page of the songs of an artist.
-func (c *Client) ArtistPage(ref string, pg, size int) ([]netease.Track, int, error) {
-	return c.tracks("/track/artist-detail/list", url.Values{"artistGUID": {ref}}, pg, size)
+func (c *Client) ArtistPage(ref, sort string, pg, size int) ([]netease.Track, int, error) {
+	return c.tracks("/track/artist-detail/list", url.Values{
+		"artistGUID": {ref},
+		"sort":       {ArtistTrackSortPolicy.Normalize(sort)},
+	}, pg, size)
 }
 
 // SearchPage returns a page of the songs the service finds for q, best
@@ -112,9 +117,21 @@ func joinNames(list []struct {
 // AlbumsPage returns a page of the albums, as cards: the album's name, its
 // artist and how many songs it has.
 func (c *Client) AlbumsPage(path, sort, q string, pg, size int) ([]netease.Playlist, int, error) {
+	return c.albumsPage(path, sort, q, nil, AlbumListSortPolicy, pg, size)
+}
+
+// ArtistAlbumsPage returns the albums of one artist.
+func (c *Client) ArtistAlbumsPage(ref, sort string, pg, size int) ([]netease.Playlist, int, error) {
+	return c.albumsPage(ArtistAlbumsPath, ArtistAlbumSortPolicy.Normalize(sort), "", url.Values{"artistGUID": {ref}}, ArtistAlbumSortPolicy, pg, size)
+}
+
+func (c *Client) albumsPage(path, sort, q string, extra url.Values, policy SortPolicy, pg, size int) ([]netease.Playlist, int, error) {
 	v := url.Values{"page": {strconv.Itoa(pg)}, "size": {strconv.Itoa(size)}}
+	for k, vs := range extra {
+		v[k] = vs
+	}
 	if sort != "" {
-		v.Set("sort", sort)
+		v.Set("sort", policy.Normalize(sort))
 	}
 	if q != "" {
 		v.Set("q", q)
@@ -156,7 +173,7 @@ func (c *Client) AlbumsPage(path, sort, q string, pg, size int) ([]netease.Playl
 func (c *Client) ArtistsPage(path, sort, q string, pg, size int) ([]netease.Playlist, int, error) {
 	v := url.Values{"page": {strconv.Itoa(pg)}, "size": {strconv.Itoa(size)}}
 	if sort != "" {
-		v.Set("sort", sort)
+		v.Set("sort", ArtistListSortPolicy.Normalize(sort))
 	}
 	if q != "" {
 		v.Set("q", q)
@@ -194,6 +211,7 @@ func (c *Client) ArtistsPage(path, sort, q string, pg, size int) ([]netease.Play
 // The addresses of the lists of cards.
 const (
 	AlbumsPath        = "/album/list"
+	ArtistAlbumsPath  = "/album/artist-detail/list"
 	ArtistsPath       = "/artist/list"
 	SearchAlbumsPath  = "/search/album"
 	SearchArtistsPath = "/search/artist"

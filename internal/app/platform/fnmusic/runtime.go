@@ -141,6 +141,33 @@ func (r *RuntimeAdapter) TranscodeBitrates() []int {
 	return append([]int(nil), backend.TranscodeBitrates...)
 }
 
+func (r *RuntimeAdapter) Sorts() map[string]string {
+	if r == nil || r.settings == nil || len(r.settings.Sorts) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(r.settings.Sorts))
+	for key, value := range r.settings.Sorts {
+		out[key] = value
+	}
+	return out
+}
+
+func (r *RuntimeAdapter) SetSort(key, value string) {
+	if r == nil || r.settings == nil || key == "" {
+		return
+	}
+	if r.settings.Sorts == nil {
+		r.settings.Sorts = map[string]string{}
+	}
+	if r.settings.Sorts[key] == value {
+		return
+	}
+	r.settings.Sorts[key] = value
+	if r.save != nil {
+		r.save()
+	}
+}
+
 func toConnectionConfig(c backend.Config) appplatform.ConnectionConfig {
 	return appplatform.ConnectionConfig{Address: c.Address, Username: c.Username, PassHash: c.PassHash, AccessCode: c.AccessCode, DeviceID: c.DeviceID, Mode: c.Mode, HTTPS: c.HTTPS}
 }

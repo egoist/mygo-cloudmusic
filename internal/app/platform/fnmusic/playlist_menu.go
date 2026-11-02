@@ -79,9 +79,6 @@ func (h *Home) listMenu(m *ui.Menu, l *List) {
 		h.playlistMenu(m, pl)
 		m.Separator()
 	}
-	if l.Spec.Kind == ListGenre {
-		h.genreSortMenu(m, l)
-	}
 	if l.Spec.Kind == ListAlbum || l.Spec.Kind == ListArtist || l.Spec.Kind == ListGenre {
 		m.Submenu("全部添加到歌单", func(sub *ui.Menu) {
 			if sub.Item("新建歌单…").Chosen() {
@@ -96,8 +93,7 @@ func (h *Home) listMenu(m *ui.Menu, l *List) {
 		m.Separator()
 	}
 	if m.Item("刷新").Chosen() {
-		l.Pages.Retry()
-		l.Pages.At(0)
+		l.Refresh()
 		h.host.Invalidate()
 	}
 }

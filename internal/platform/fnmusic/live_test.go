@@ -52,7 +52,7 @@ func TestLivePages(t *testing.T) {
 		return len(tr), total, err
 	})
 	timed("favorites", func() (int, int, error) {
-		tr, total, err := c.FavoritesPage(1, 100)
+		tr, total, err := c.FavoritesPage(FavoriteSortPolicy.Default, 1, 100)
 		return len(tr), total, err
 	})
 	timed("search 周杰伦", func() (int, int, error) {
@@ -68,7 +68,7 @@ func TestLivePages(t *testing.T) {
 	}
 	t.Logf("albums by size: %d of %d; first %q by %q, %d songs, cover %s", len(albums), total, albums[0].Name, albums[0].Sub, albums[0].TrackCount, albums[0].CoverURL)
 	timed("album songs", func() (int, int, error) {
-		tr, total, err := c.AlbumPage(albums[0].Ref, 1, 100)
+		tr, total, err := c.AlbumPage(albums[0].Ref, AlbumTrackSortPolicy.Default, 1, 100)
 		return len(tr), total, err
 	})
 	artists, total, err := c.ArtistsPage(ArtistsPath, ArtistsSize, "", 1, 60)
@@ -77,7 +77,7 @@ func TestLivePages(t *testing.T) {
 	}
 	t.Logf("artists by size: %d of %d; first %q (%s)", len(artists), total, artists[0].Name, artists[0].Sub)
 	timed("artist songs", func() (int, int, error) {
-		tr, total, err := c.ArtistPage(artists[0].Ref, 1, 100)
+		tr, total, err := c.ArtistPage(artists[0].Ref, ArtistTrackSortPolicy.Default, 1, 100)
 		return len(tr), total, err
 	})
 	if b, err := c.Cover(artists[0].CoverURL[len(coverScheme):], 200); err != nil || len(b) < 500 {

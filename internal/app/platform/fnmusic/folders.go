@@ -18,6 +18,7 @@ type folderViewState struct {
 
 	generation uint64
 	roots      []backend.SharedLibrary
+	rootNames  map[string]string
 	rootsBusy  bool
 	rootsErr   error
 	pages      map[string]backend.FolderPage
@@ -48,7 +49,7 @@ func (f *folderViewState) reset(gen uint64) {
 		return
 	}
 	f.generation = gen
-	f.roots, f.rootsBusy, f.rootsErr = nil, false, nil
+	f.roots, f.rootNames, f.rootsBusy, f.rootsErr = nil, nil, false, nil
 	f.pages = map[string]backend.FolderPage{}
 	f.loading = map[string]bool{}
 	f.errs = map[string]error{}
@@ -93,7 +94,14 @@ func (h *Home) ensureFolderRoots() {
 	f.rootsBusy = true
 	gen := f.generation
 	go func() {
+		var dirs []backend.AuthorizedDirectory
+		done := make(chan struct{})
+		go func() {
+			dirs, _ = client.AuthorizedDirectories()
+			close(done)
+		}()
 		roots, err := client.SharedLibraries()
+		<-done
 		h.postCurrent(gen, func() {
 			f.rootsBusy = false
 			if err != nil {
@@ -103,7 +111,7 @@ func (h *Home) ensureFolderRoots() {
 			if roots == nil {
 				roots = []backend.SharedLibrary{}
 			}
-			f.roots = roots
+			f.roots, f.rootNames = roots, rootNames(dirs)
 		})
 	}()
 }
@@ -147,7 +155,7 @@ func (h *Home) refreshFolder(folderPath string) {
 		return
 	}
 	if folderPath == "" {
-		f.roots, f.rootsErr = nil, nil
+		f.roots, f.rootNames, f.rootsErr = nil, nil, nil
 		h.ensureFolderRoots()
 	} else {
 		delete(f.errs, folderPath)
@@ -172,6 +180,7 @@ func (h *Home) setFolderSort(sort string) {
 	f.sort = sort
 	f.pages = map[string]backend.FolderPage{}
 	f.errs = map[string]error{}
+	h.rememberSort(sortKeyFolders, sort)
 	h.host.Invalidate()
 }
 
@@ -203,6 +212,18 @@ func rootName(root backend.SharedLibrary) string {
 	return path.Base(strings.TrimRight(root.Path, "/"))
 }
 
+func (f *folderViewState) rootName(root backend.SharedLibrary) string {
+	if name := strings.TrimSpace(root.Name); name != "" {
+		return name
+	}
+	if f != nil {
+		if name := f.rootNames[rootPathKey(root.Path)]; name != "" {
+			return name
+		}
+	}
+	return rootName(root)
+}
+
 // folderCrumb is one folder over the one shown, from its library down.
 type folderCrumb struct{ Name, Path string }
 
@@ -216,7 +237,7 @@ func (f *folderViewState) folderCrumbs(folderPath string) []folderCrumb {
 	if folderPath == base {
 		return nil
 	}
-	crumbs := []folderCrumb{{Name: rootName(root), Path: base}}
+	crumbs := []folderCrumb{{Name: f.rootName(root), Path: base}}
 	rest := strings.Split(strings.Trim(strings.TrimPrefix(folderPath, base), "/"), "/")
 	at := base
 	for _, part := range rest[:len(rest)-1] {

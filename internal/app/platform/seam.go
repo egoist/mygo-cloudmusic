@@ -50,10 +50,11 @@ type TranscodeSettings struct {
 // PlatformSettings is the provider-owned namespace persisted by the root
 // settings file. Provider adapters validate and interpret the values.
 type PlatformSettings struct {
-	Config           ConnectionConfig `json:"config,omitempty"`
-	TranscodeMode    TranscodeMode    `json:"transcodeMode,omitempty"`
-	TranscodeBitrate int              `json:"transcodeBitrate,omitempty"`
-	LibrarySort      string           `json:"librarySort,omitempty"`
+	Config           ConnectionConfig  `json:"config,omitempty"`
+	TranscodeMode    TranscodeMode     `json:"transcodeMode,omitempty"`
+	TranscodeBitrate int               `json:"transcodeBitrate,omitempty"`
+	LibrarySort      string            `json:"librarySort,omitempty"`
+	Sorts            map[string]string `json:"sorts,omitempty"`
 }
 
 // Runtime is the lifecycle seam for a platform account. It contains no
@@ -71,6 +72,8 @@ type Runtime interface {
 	Transcode() TranscodeSettings
 	SetTranscode(TranscodeSettings)
 	TranscodeBitrates() []int
+	Sorts() map[string]string
+	SetSort(string, string)
 }
 
 // Home is the platform-owned navigation and settings shell. The root app
@@ -194,17 +197,20 @@ type SearchResults struct {
 }
 
 type CardView struct {
-	Title   string
-	Sub     string
-	Count   int
-	Header  func(*ui.Context)
-	Sort    []SortChoice
-	Current string
-	OnSort  func(string)
-	OnOpen  func(int64)
-	OnPlay  func(int64)
+	Title          string
+	Sub            string
+	Count          int
+	Header         func(*ui.Context)
+	HeaderSkeleton func(*ui.Context)
+	Sort           []SortChoice
+	Current        string
+	OnSort         func(string)
+	OnOpen         func(int64)
+	OnPlay         func(int64)
 	// Meta reserves the card's secondary line in its loading skeleton.
 	Meta bool
+	// Placeholder is shown when a card has no cover at all.
+	Placeholder *ui.SVG
 	// Art draws the cover of a card that has none, into its square.
 	Art func(p *ui.Painter, r ui.Rect, card *netease.Playlist, radius float32)
 }

@@ -13,6 +13,7 @@ const (
 	PageSearchArtists Page = "search-artists"
 	PageAlbums        Page = "albums"
 	PageArtists       Page = "artists"
+	PageArtistAlbums  Page = "artist-albums"
 	PagePlaylist      Page = "playlist"
 	PageRoam          Page = "roam"
 	PageFolders       Page = "folders"

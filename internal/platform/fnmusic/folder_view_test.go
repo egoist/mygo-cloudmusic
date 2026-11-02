@@ -29,6 +29,10 @@ func TestFolderEndpoints(t *testing.T) {
 	if err != nil || len(roots) != 1 || roots[0].Path != "/music" {
 		t.Fatalf("roots = %+v, %v", roots, err)
 	}
+	dirs, err := c.AuthorizedDirectories()
+	if err != nil || len(dirs) != 1 || dirs[0].Comment != "别闹快走开" || dirs[0].CloudStorageType != 3 {
+		t.Fatalf("authorized directories = %+v, %v", dirs, err)
+	}
 	page, err := c.FolderPage("/music/Adele", SortFolderTitleAsc)
 	if err != nil || page.Path != "/music/Adele" || len(page.Folders) != 1 || len(page.Tracks) != 1 {
 		t.Fatalf("page = %+v, %v", page, err)
@@ -99,6 +103,11 @@ func (s *folderTestServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/shared-library/list":
 		s.reply(w, map[string]any{"list": []map[string]any{{"guid": "root", "path": "/music", "accessStatus": 0}}})
+		return
+	case "/app-center/authed-dir/list":
+		s.reply(w, map[string]any{"list": []map[string]any{{
+			"path": "/music", "storageType": 2, "cloudStorageType": 3, "comment": "别闹快走开",
+		}}})
 		return
 	case "/folder-view/list":
 		s.query = r.URL.Query()

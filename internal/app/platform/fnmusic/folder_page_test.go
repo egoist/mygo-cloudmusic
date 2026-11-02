@@ -32,6 +32,22 @@ func TestFolderCrumbsStartAtTheirLibrary(t *testing.T) {
 	}
 }
 
+// Remote mount roots use the cloud name and comment the web player shows.
+func TestRootNameUsesAuthorizedDirectory(t *testing.T) {
+	dirs := []backend.AuthorizedDirectory{{
+		Path: "/vol02/1000-1-85f5ed8b", StorageType: 2, CloudStorageType: 3, Comment: "别闹快走开",
+	}}
+	f := newFolderViewState(nil)
+	f.rootNames = rootNames(dirs)
+	root := backend.SharedLibrary{Path: "/vol02/1000-1-85f5ed8b"}
+	if got := f.rootName(root); got != "115 生活 - 别闹快走开" {
+		t.Fatalf("root name = %q", got)
+	}
+	if got := (backend.SharedLibrary{Name: "自建库", Path: root.Path}); f.rootName(got) != "自建库" {
+		t.Fatalf("explicit library name was overridden: %q", f.rootName(got))
+	}
+}
+
 // Changing the order drops every cached folder so none is shown in the old order.
 func TestFolderSortDropsCachedPages(t *testing.T) {
 	h := NewHome(NewState(), nil)

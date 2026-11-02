@@ -656,6 +656,10 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 	}
 	top, bottom := h.a.insets(c)
 	h.a.underTop, h.a.underBottom = true, true
+	renderArt := view.Art
+	if renderArt == nil && view.Placeholder != nil {
+		renderArt = h.a.iconCardArt(view.Placeholder)
+	}
 	routeKey := "platform-cards"
 	if home := h.a.activeHome(); home != nil {
 		r := home.Route()
@@ -706,10 +710,10 @@ func (h platformHost) RenderCards(c *ui.Context, p *paging.Pager[netease.Playlis
 					}
 					key := c.Key(fmt.Sprintf("platform-card-%d", pl.ID))
 					var open bool
-					if pl.Cover() == "" && view.Art != nil {
+					if pl.Cover() == "" && renderArt != nil {
 						card := *pl
 						open = h.a.drawnCard(key, pl.Name, pl.UpdateFreq, func(p *ui.Painter, r ui.Rect, radius float32) {
-							view.Art(p, r, &card, radius)
+							renderArt(p, r, &card, radius)
 						}, play)
 					} else {
 						open = h.a.coverCard(key, pl.Name, pl.Cover(), pl.PlayCount, pl.UpdateFreq, play)

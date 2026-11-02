@@ -450,6 +450,7 @@ func (p *Player) TogglePlay() {
 		return
 	}
 	p.playing = true
+	p.markStarted()
 	if !p.seeking && !out.Playing() {
 		if out.Position() >= out.Duration()-time.Second {
 			out.Seek(0)
@@ -586,7 +587,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.at = at
 	t := p.queue[p.order[at]]
 	p.track = &t
-	p.loading, p.playing, p.err = true, play, ""
+	p.loading, p.playing, p.started, p.err = true, play, false, ""
 	p.awaiting = false
 	p.lyrics, p.lyricsLoaded = nil, false
 	p.pending = from
@@ -679,6 +680,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			if p.playing {
 				p.out.Play()
 				p.fade.fade(1, fadeIn, nil)
+				p.markStarted()
 			}
 			p.sync()
 		})

@@ -81,19 +81,43 @@ func (l *List) Cover() string {
 	return ""
 }
 
+// SetSort changes the order of a loaded list without dropping its geometry.
+func (l *List) SetSort(sort string) {
+	if l == nil || l.Spec.Sort == sort {
+		return
+	}
+	l.Spec.Sort = sort
+	if l.Pages != nil {
+		l.Pages.Reload()
+	}
+}
+
+// Refresh asks for the current list again instead of trusting its loaded
+// pages. Retry alone only touches failed pages and leaves cached rows in place.
+func (l *List) Refresh() {
+	if l == nil || l.Pages == nil {
+		return
+	}
+	l.Pages.Reload()
+	l.Pages.At(0)
+}
+
 // Catalog owns list and card state for one Feiniu session.
 type Catalog struct {
 	Session  *State
 	Post     func(func())
 	OnTracks func([]netease.Track)
 
-	Lists                              map[int64]*List
-	Meta                               map[int64]netease.Playlist
-	SearchList                         *List
-	SearchAlbums, SearchArtists        *paging.Pager[netease.Playlist]
-	Albums, Artists, Genres            *paging.Pager[netease.Playlist]
-	AlbumSort, ArtistSort, LibrarySort string
-	GenreSort, GenreTrackSort          string
+	Lists                       map[int64]*List
+	Meta                        map[int64]netease.Playlist
+	SearchList                  *List
+	SearchAlbums, SearchArtists *paging.Pager[netease.Playlist]
+	Albums, Artists, Genres     *paging.Pager[netease.Playlist]
+	ArtistAlbums                map[int64]*paging.Pager[netease.Playlist]
+
+	LibrarySort, FavoriteSort, AlbumSort, AlbumDetailSort string
+	ArtistSort, ArtistTrackSort, ArtistAlbumSort          string
+	GenreSort, GenreTrackSort                             string
 }
 
 // NewCatalog creates empty platform catalog state.
@@ -101,7 +125,20 @@ func NewCatalog(session *State, post func(func())) *Catalog {
 	if post == nil {
 		post = func(fn func()) { fn() }
 	}
-	return &Catalog{Session: session, Post: post, Lists: map[int64]*List{}, Meta: map[int64]netease.Playlist{}}
+	return &Catalog{
+		Session: session, Post: post,
+		Lists: map[int64]*List{}, Meta: map[int64]netease.Playlist{},
+		ArtistAlbums:    map[int64]*paging.Pager[netease.Playlist]{},
+		LibrarySort:     fnmusic.LibrarySortPolicy.Default,
+		FavoriteSort:    fnmusic.FavoriteSortPolicy.Default,
+		AlbumSort:       fnmusic.AlbumListSortPolicy.Default,
+		AlbumDetailSort: fnmusic.AlbumTrackSortPolicy.Default,
+		ArtistSort:      fnmusic.ArtistListSortPolicy.Default,
+		ArtistTrackSort: fnmusic.ArtistTrackSortPolicy.Default,
+		ArtistAlbumSort: fnmusic.ArtistAlbumSortPolicy.Default,
+		GenreSort:       fnmusic.GenreListSortPolicy.Default,
+		GenreTrackSort:  fnmusic.GenreTrackSortPolicy.Default,
+	}
 }
 
 func (c *Catalog) trackPager(fetch func(page int) ([]netease.Track, int, error)) *paging.Pager[netease.Track] {
@@ -161,35 +198,38 @@ func (c *Catalog) NewList(spec Spec) *List {
 	}
 	switch spec.Kind {
 	case ListLibrary:
-		sort := spec.Sort
-		if sort == "" {
-			sort = fnmusic.SortRecent
-		}
 		l.Kind, l.Name = "飞牛音乐", "音乐库"
 		l.HeaderKind = "音乐库"
-		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.LibraryPage(sort, page, size) })
+		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) {
+			return client.LibraryPage(l.Spec.Sort, page, size)
+		})
 	case ListFavorites:
 		l.Kind, l.Name = "飞牛音乐", "我喜欢"
 		l.HeaderKind = "歌单"
-		l.Fetch = guard(client.FavoritesPage)
+		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) {
+			return client.FavoritesPage(l.Spec.Sort, page, size)
+		})
 	case ListRecent:
 		l.Kind, l.Name = "飞牛音乐", "最近播放"
 		l.HeaderKind = "播放记录"
 		l.Fetch = guard(client.RecentPage)
 	case ListAlbum:
 		l.Kind, l.HeaderKind = fnmusic.KindAlbum, "专辑"
-		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.AlbumPage(spec.Ref, page, size) })
+		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) {
+			return client.AlbumPage(spec.Ref, l.Spec.Sort, page, size)
+		})
 	case ListArtist:
 		l.Kind, l.HeaderKind = fnmusic.KindArtist, "歌手"
-		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.ArtistPage(spec.Ref, page, size) })
+		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) {
+			return client.ArtistPage(spec.Ref, l.Spec.Sort, page, size)
+		})
 	case ListPlaylist:
 		l.Kind, l.HeaderKind = "歌单", "歌单"
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) { return client.PlaylistPage(spec.Ref, page, size) })
 	case ListGenre:
-		sort := fnmusic.ParseGenreTrackSort(spec.Sort)
 		l.Kind, l.HeaderKind = fnmusic.KindGenre, "风格"
 		l.Fetch = guard(func(page, size int) ([]netease.Track, int, error) {
-			res, err := client.GenreTracksPage(spec.Ref, sort, page, size)
+			res, err := client.GenreTracksPage(spec.Ref, l.Spec.Sort, page, size)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -244,6 +284,7 @@ func (c *Catalog) ListForRoute(id int64, kind, ref string) *List {
 		return nil
 	}
 	if l := c.Lists[id]; l != nil {
+		l.SetSort(c.listSort(l))
 		return l
 	}
 	var spec Spec
@@ -252,7 +293,7 @@ func (c *Catalog) ListForRoute(id int64, kind, ref string) *List {
 	case fnmusic.LibraryID:
 		spec = Spec{Kind: ListLibrary, Sort: c.LibrarySort}
 	case fnmusic.FavoritesID:
-		spec = Spec{Kind: ListFavorites}
+		spec = Spec{Kind: ListFavorites, Sort: c.FavoriteSort}
 	case fnmusic.RecentID:
 		spec = Spec{Kind: ListRecent}
 	default:
@@ -282,9 +323,9 @@ func (c *Catalog) ListForRoute(id int64, kind, ref string) *List {
 		spec.Ref = meta.Ref
 		switch meta.Kind {
 		case fnmusic.KindAlbum:
-			spec.Kind = ListAlbum
+			spec.Kind, spec.Sort = ListAlbum, c.AlbumDetailSort
 		case fnmusic.KindArtist:
-			spec.Kind = ListArtist
+			spec.Kind, spec.Sort = ListArtist, c.ArtistTrackSort
 		case fnmusic.KindGenre:
 			spec.Kind, spec.Sort = ListGenre, c.GenreTrackSort
 		default:
@@ -300,6 +341,56 @@ func (c *Catalog) ListForRoute(id int64, kind, ref string) *List {
 	}
 	c.Lists[id] = l
 	return l
+}
+
+func (c *Catalog) listSort(l *List) string {
+	if l == nil {
+		return ""
+	}
+	switch l.Spec.Kind {
+	case ListLibrary:
+		return fnmusic.LibrarySortPolicy.Normalize(c.LibrarySort)
+	case ListFavorites:
+		return fnmusic.FavoriteSortPolicy.Normalize(c.FavoriteSort)
+	case ListAlbum:
+		return fnmusic.AlbumTrackSortPolicy.Normalize(c.AlbumDetailSort)
+	case ListArtist:
+		return fnmusic.ArtistTrackSortPolicy.Normalize(c.ArtistTrackSort)
+	case ListGenre:
+		return fnmusic.GenreTrackSortPolicy.Normalize(c.GenreTrackSort)
+	default:
+		return ""
+	}
+}
+
+// FavoriteChanged drops or updates the cached favorites list after a
+// successful like change.
+func (c *Catalog) FavoriteChanged(id int64, liked bool) {
+	if c == nil {
+		return
+	}
+	if !liked && c.RemoveFavorite(id) {
+		return
+	}
+	c.Refresh(fnmusic.FavoritesID)
+}
+
+// RemoveFavorite takes a song out of the loaded favorites list without
+// refetching every page.
+func (c *Catalog) RemoveFavorite(id int64) bool {
+	if c == nil {
+		return false
+	}
+	l := c.Lists[fnmusic.FavoritesID]
+	if l == nil || l.Pages == nil {
+		return false
+	}
+	index := l.Pages.IndexOf(func(tr *netease.Track) bool { return tr != nil && tr.ID == id })
+	if index < 0 {
+		return false
+	}
+	l.Pages.RemoveAt(index)
+	return true
 }
 
 // Refresh drops one list so the next view asks the service again.
@@ -334,7 +425,7 @@ func (c *Catalog) AlbumsList() *paging.Pager[netease.Playlist] {
 		client := c.Session.Client()
 		_, gen, _ := c.Session.activeClient(context.Background())
 		c.Albums = c.cardPager(c.cardFetch(client, gen, func(page int) ([]netease.Playlist, int, error) {
-			return client.AlbumsPage(fnmusic.AlbumsPath, c.AlbumSort, "", page, CardsPage)
+			return client.AlbumsPage(fnmusic.AlbumsPath, fnmusic.AlbumListSortPolicy.Normalize(c.AlbumSort), "", page, CardsPage)
 		}))
 	}
 	return c.Albums
@@ -345,10 +436,31 @@ func (c *Catalog) ArtistsList() *paging.Pager[netease.Playlist] {
 		client := c.Session.Client()
 		_, gen, _ := c.Session.activeClient(context.Background())
 		c.Artists = c.cardPager(c.cardFetch(client, gen, func(page int) ([]netease.Playlist, int, error) {
-			return client.ArtistsPage(fnmusic.ArtistsPath, c.ArtistSort, "", page, CardsPage)
+			return client.ArtistsPage(fnmusic.ArtistsPath, fnmusic.ArtistListSortPolicy.Normalize(c.ArtistSort), "", page, CardsPage)
 		}))
 	}
 	return c.Artists
+}
+
+// ArtistAlbumsList is the albums of one artist, in the order of
+// ArtistAlbumSort.
+func (c *Catalog) ArtistAlbumsList(id int64, ref string) *paging.Pager[netease.Playlist] {
+	if c == nil || ref == "" || c.Session == nil || c.Session.Client() == nil {
+		return nil
+	}
+	if c.ArtistAlbums == nil {
+		c.ArtistAlbums = map[int64]*paging.Pager[netease.Playlist]{}
+	}
+	if p := c.ArtistAlbums[id]; p != nil {
+		return p
+	}
+	client := c.Session.Client()
+	_, gen, _ := c.Session.activeClient(context.Background())
+	p := c.cardPager(c.cardFetch(client, gen, func(page int) ([]netease.Playlist, int, error) {
+		return client.ArtistAlbumsPage(ref, fnmusic.ArtistAlbumSortPolicy.Normalize(c.ArtistAlbumSort), page, CardsPage)
+	}))
+	c.ArtistAlbums[id] = p
+	return p
 }
 
 // GenresList is the style cards, in the order of GenreSort.

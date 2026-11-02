@@ -32,3 +32,17 @@ func TestRuntimeGenericSettings(t *testing.T) {
 		t.Fatalf("secret connection fields leaked into settings: %s", b)
 	}
 }
+
+// Sort preferences are persisted per page and survive a reload.
+func TestRuntimeSortPreferences(t *testing.T) {
+	settings := &appplatform.PlatformSettings{}
+	rt := NewRuntime(NewState(), settings)
+	rt.SetSort(sortKeyAlbums, "releaseYear,desc")
+	if got := rt.Sorts()[sortKeyAlbums]; got != "releaseYear,desc" {
+		t.Fatalf("stored sort = %q", got)
+	}
+	next := NewRuntime(NewState(), settings)
+	if got := next.Sorts()[sortKeyAlbums]; got != "releaseYear,desc" {
+		t.Fatalf("reloaded sort = %q", got)
+	}
+}

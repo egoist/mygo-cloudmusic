@@ -58,7 +58,7 @@ func (h *Home) folderRootsPage(c *ui.Context, f *folderViewState) {
 			return
 		}
 		root := roots[i-1]
-		node := backend.FolderNode{Name: rootName(root), Path: strings.TrimRight(root.Path, "/")}
+		node := backend.FolderNode{Name: f.rootName(root), Path: strings.TrimRight(root.Path, "/")}
 		h.folderRow(c, node, folderRootNote(root), root.AccessStatus == 0)
 	})
 }
@@ -162,7 +162,7 @@ func (h *Home) folderHeader(c *ui.Context, f *folderViewState, page backend.Fold
 		name = path.Base(page.Path)
 	}
 	if root, ok := f.folderRoot(page.Path); ok && strings.TrimRight(root.Path, "/") == page.Path {
-		name = rootName(root)
+		name = f.rootName(root)
 	}
 	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 12, 26, 12).Children(func() {
 		folderTile(c, 212, 14, 72).Shadow(0, 18, 40, -10, ui.RGBA(0, 0, 0, 0.18))

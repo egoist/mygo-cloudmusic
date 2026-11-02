@@ -97,6 +97,7 @@ func (p *Player) Reset() {
 }
 
 type PlatformPlayer struct {
+	started bool // the current track has been reported as started
 	// Stream resolves audio for the active platform. Nil uses NetEase's
 	// original resolver, preserving the upstream default path.
 	ResolveStream func(*netease.Track, string) (*netease.Stream, error)
@@ -105,6 +106,8 @@ type PlatformPlayer struct {
 	Artwork       func(*netease.Track) ([]byte, error)
 	ResolveLyrics func(*netease.Track) (string, string, string, error)
 	ResolveAudio  func(*netease.Track, string) (*netease.Stream, AudioStream, error)
+	// Started hears a track once, as it first begins to play.
+	Started func(*netease.Track)
 }
 
 // acceptRefill applies a provider queue refill without making player.go know
@@ -161,4 +164,13 @@ func (p *Player) resolveStream(t *netease.Track, level string) (*netease.Stream,
 		return p.ResolveStream(t, level)
 	}
 	return netease.SongURL(t.ID, level)
+}
+
+// markStarted reports the current track once, as it first begins to play.
+func (p *Player) markStarted() {
+	if p.started || p.track == nil || p.Started == nil {
+		return
+	}
+	p.started = true
+	p.Started(p.track)
 }

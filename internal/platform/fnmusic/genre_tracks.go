@@ -39,25 +39,16 @@ const (
 
 // ParseGenreTrackSort normalizes a persisted style-song sort value.
 func ParseGenreTrackSort(sort string) string {
-	switch strings.TrimSpace(sort) {
-	case SortGenreTrackCreatedAsc, SortGenreTrackCreatedDesc,
-		SortGenreTrackUpdatedAsc, SortGenreTrackUpdatedDesc,
-		SortGenreTrackTitleAsc, SortGenreTrackTitleDesc:
-		return strings.TrimSpace(sort)
-	default:
-		return SortGenreTrackCreatedDesc
-	}
+	return GenreTrackSortPolicy.Normalize(sort)
 }
 
 // GenreTrackSortValues returns the service-supported style-song sorts.
 func GenreTrackSortValues() []string {
 	return []string{
-		SortGenreTrackCreatedAsc,
 		SortGenreTrackCreatedDesc,
-		SortGenreTrackUpdatedAsc,
-		SortGenreTrackUpdatedDesc,
-		SortGenreTrackTitleAsc,
-		SortGenreTrackTitleDesc,
+		SortGenreTrackCreatedAsc,
+		SortValue(SortFieldArtistName, SortOrderDesc),
+		SortValue(SortFieldArtistName, SortOrderAsc),
 	}
 }
 

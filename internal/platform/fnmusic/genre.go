@@ -45,21 +45,16 @@ const (
 // order used by the platform UI.
 func GenreSortValues() []string {
 	return []string{
+		SortGenreNameDesc,
+		SortGenreNameAsc,
 		SortGenreTrackCountDesc,
 		SortGenreTrackCountAsc,
-		SortGenreNameAsc,
-		SortGenreNameDesc,
 	}
 }
 
 // ParseGenreSort normalizes a persisted style-list sort value.
 func ParseGenreSort(sort string) string {
-	switch strings.TrimSpace(sort) {
-	case SortGenreNameAsc, SortGenreNameDesc, SortGenreTrackCountAsc, SortGenreTrackCountDesc:
-		return strings.TrimSpace(sort)
-	default:
-		return SortGenreTrackCountDesc
-	}
+	return GenreListSortPolicy.Normalize(sort)
 }
 
 // GenresPage returns one page of styles. The service uses one-based pages;

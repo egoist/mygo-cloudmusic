@@ -136,6 +136,24 @@ func (s *State) SetFavorite(ctx context.Context, tr *netease.Track, liked bool) 
 	return err
 }
 
+// ReportPlay records a started track in the service's play history.
+func (s *State) ReportPlay(ctx context.Context, tr *netease.Track) error {
+	if s == nil || tr == nil || tr.Ref == "" {
+		return nil
+	}
+	c, gen, err := s.activeClient(ctx)
+	if err != nil {
+		return err
+	}
+	if err = c.ReportPlay(tr.Ref); err != nil {
+		return err
+	}
+	if !s.clientCurrent(c, gen) {
+		return context.Canceled
+	}
+	return nil
+}
+
 // RemoveFromHistory removes one entry from the server play history and keeps
 // the operation tied to the session that issued it.
 func (s *State) RemoveFromHistory(ctx context.Context, tr netease.Track) error {

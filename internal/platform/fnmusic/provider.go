@@ -75,15 +75,15 @@ func (p *Provider) Page(ctx context.Context, req platform.PageRequest) (platform
 		}
 		tracks, total, err = p.client.LibraryPage(sort, pg, size)
 	case platform.ListFavorites:
-		tracks, total, err = p.client.FavoritesPage(pg, size)
+		tracks, total, err = p.client.FavoritesPage(req.Sort, pg, size)
 	case platform.ListRecent:
 		tracks, total, err = p.client.RecentPage(pg, size)
 	case platform.ListPlaylist:
 		tracks, total, err = p.client.PlaylistPage(req.Ref, pg, size)
 	case platform.ListAlbum:
-		tracks, total, err = p.client.AlbumPage(req.Ref, pg, size)
+		tracks, total, err = p.client.AlbumPage(req.Ref, req.Sort, pg, size)
 	case platform.ListArtist:
-		tracks, total, err = p.client.ArtistPage(req.Ref, pg, size)
+		tracks, total, err = p.client.ArtistPage(req.Ref, req.Sort, pg, size)
 	case platform.ListAlbums:
 		cards, total, err = p.client.AlbumsPage(AlbumsPath, req.Sort, req.Query, pg, size)
 	case platform.ListArtists:

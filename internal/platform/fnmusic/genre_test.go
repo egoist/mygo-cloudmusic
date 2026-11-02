@@ -24,7 +24,7 @@ func TestGenreEndpoints(t *testing.T) {
 	if err != nil || list.Total != 2 || len(list.List) != 1 || list.List[0].GUID != "g1" {
 		t.Fatalf("genres = %+v, err = %v", list, err)
 	}
-	if list.Sort != SortGenreTrackCountDesc {
+	if list.Sort != SortGenreNameDesc {
 		t.Fatalf("default genre sort = %q", list.Sort)
 	}
 
@@ -60,7 +60,7 @@ func TestGenreEndpoints(t *testing.T) {
 
 // Invalid persisted values do not become requests the service cannot order.
 func TestGenreSortValidation(t *testing.T) {
-	if got := ParseGenreSort("wrong"); got != SortGenreTrackCountDesc {
+	if got := ParseGenreSort("wrong"); got != SortGenreNameDesc {
 		t.Errorf("genre default sort = %q", got)
 	}
 	if got := ParseGenreTrackSort("wrong"); got != SortGenreTrackCreatedDesc {
@@ -86,7 +86,7 @@ func (s *genreTestServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.queries = append(s.queries, r.URL.Query())
 		sort := r.URL.Query().Get("sort")
 		if sort == "" {
-			sort = SortGenreTrackCountDesc
+			sort = SortGenreNameDesc
 		}
 		s.reply(w, map[string]any{
 			"list":  []map[string]any{{"guid": "g1", "name": "Blues", "trackCount": 1152}},

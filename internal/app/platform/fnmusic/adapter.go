@@ -196,4 +196,9 @@ func (a *Adapter) ConfigurePlayer(p *player.Player) {
 			return backend.TranscodeAuto
 		}
 	}, func() int { return a.runtime.Transcode().Bitrate })
+	p.Started = func(tr *netease.Track) {
+		if a.home != nil {
+			a.home.ReportStarted(tr)
+		}
+	}
 }

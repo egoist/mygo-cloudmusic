@@ -32,6 +32,7 @@ type Home struct {
 	connectionGen                       uint64
 	accountOpen                         bool
 	search                              string
+	sortGen                             uint64
 	navScroll                           ui.ScrollState
 	nameOpen                            bool
 	deleteOpen                          bool
@@ -70,6 +71,7 @@ func NewHome(state *State, host Host, runtimes ...appplatform.Runtime) *Home {
 		h.formAddress, h.formUser, h.formCode = cfg.Address, cfg.Username, cfg.AccessCode
 		h.formMode, h.formHTTPS = cfg.Mode, cfg.HTTPS
 	}
+	h.restoreSorts()
 	return h
 }
 
@@ -155,12 +157,13 @@ func (h *Home) Content(c *ui.Context) {
 		h.dialogs(c)
 		return
 	}
+	h.syncSorts()
 	if !h.state.Connected() {
 		h.connectionPage(c)
 		return
 	}
 	switch h.route.Page {
-	case PageSearch, PageSearchAlbums, PageSearchArtists, PageAlbums, PageArtists:
+	case PageSearch, PageSearchAlbums, PageSearchArtists, PageAlbums, PageArtists, PageArtistAlbums:
 		h.cardsPage(c)
 	case PageRoam:
 		h.roamPage(c)
@@ -179,7 +182,7 @@ func (h *Home) connectionLoading(c *ui.Context) {
 	switch h.route.Page {
 	case PageSearch:
 		h.host.SearchSkeleton(c)
-	case PageSearchAlbums, PageSearchArtists, PageAlbums, PageArtists, PageGenres:
+	case PageSearchAlbums, PageSearchArtists, PageAlbums, PageArtists, PageArtistAlbums, PageGenres:
 		h.host.CardsSkeleton(c, h.cardSkeletonView())
 	case PageFolders:
 		if h.route.Query == "" {
@@ -198,19 +201,43 @@ func (h *Home) connectionLoading(c *ui.Context) {
 		if catalog := h.state.Catalog(); catalog != nil {
 			l = catalog.Lists[id]
 		}
-		showAlbum := true
-		if l != nil {
-			showAlbum = l.Spec.Kind != ListAlbum && l.Spec.Kind != ListArtist
+		if l == nil {
+			l = h.routeListSkeleton()
 		}
 		h.host.TrackSkeleton(c, TrackView{
-			ShowAlbum:      showAlbum,
-			HeaderSkeleton: func(c *ui.Context) { h.listHeaderSkeleton(c, l) },
+			ShowAlbum: l.Spec.Kind != ListAlbum && l.Spec.Kind != ListArtist,
+			HeaderSkeleton: func(c *ui.Context) {
+				if l.Spec.Kind == ListArtist {
+					h.artistListHeaderSkeleton(c, l)
+				} else {
+					h.listHeaderSkeleton(c, l)
+				}
+			},
 		})
 	}
 }
 
+func (h *Home) ReportStarted(tr *netease.Track) {
+	if h == nil || h.state == nil || h.host == nil || tr == nil || tr.Ref == "" || tr.Source != backend.Source {
+		return
+	}
+	onRecent := h.route.Page == PagePlaylist && h.route.ID == backend.RecentID
+	gen := h.state.Generation()
+	go func() {
+		err := h.state.ReportPlay(context.Background(), tr)
+		h.postCurrent(gen, func() {
+			if err != nil || onRecent {
+				// The visible recent page already owns these rows; refreshing
+				// on every track start would flash its skeleton.
+				return
+			}
+			h.state.Catalog().Refresh(backend.RecentID)
+		})
+	}()
+}
+
 func (h *Home) RequestFavorite(tr netease.Track, liked bool) {
-	if h.state == nil {
+	if h.state == nil || h.state.LikeBusy(tr.ID) {
 		return
 	}
 	gen := h.state.Generation()
@@ -219,7 +246,11 @@ func (h *Home) RequestFavorite(tr netease.Track, liked bool) {
 		h.postCurrent(gen, func() {
 			if err != nil {
 				h.host.Toast("操作失败，请稍后再试")
+				h.host.Invalidate()
+				return
 			}
+			h.state.Catalog().FavoriteChanged(tr.ID, liked)
+			h.host.Invalidate()
 		})
 	}()
 }

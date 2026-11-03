@@ -55,6 +55,13 @@ type PlatformSettings struct {
 	TranscodeBitrate int               `json:"transcodeBitrate,omitempty"`
 	LibrarySort      string            `json:"librarySort,omitempty"`
 	Sorts            map[string]string `json:"sorts,omitempty"`
+	// Quality, Normalize, HotComments and SearchHistory are provider playback
+	// preferences, kept in the provider's own namespace. Optional values fall
+	// back to the provider's defaults, not to the shared ones.
+	Quality       string   `json:"quality,omitempty"`
+	Normalize     *bool    `json:"normalize,omitempty"`
+	HotComments   bool     `json:"hotComments,omitempty"`
+	SearchHistory []string `json:"searchHistory,omitempty"`
 }
 
 // Runtime is the lifecycle seam for a platform account. It contains no

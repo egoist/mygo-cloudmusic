@@ -167,8 +167,11 @@ func (h platformHost) SearchHistory() []string {
 	if h.a == nil {
 		return nil
 	}
-	if id := h.a.platformID; id != "" && id != platform.NeteaseID {
-		return append([]string(nil), h.a.settings.PlatformSearch[string(id)]...)
+	switch h.a.platformID {
+	case platform.QQMusicID:
+		return append([]string(nil), h.a.settings.QQMusic.SearchHistory...)
+	case platform.FnmusicID:
+		return append([]string(nil), h.a.settings.FnMusic.SearchHistory...)
 	}
 	return append([]string(nil), h.a.settings.SearchHistory...)
 }
@@ -177,21 +180,29 @@ func (h platformHost) RememberSearch(q string) {
 	if h.a == nil {
 		return
 	}
-	if id := h.a.platformID; id != "" && id != platform.NeteaseID {
-		if h.a.settings.PlatformSearch == nil {
-			h.a.settings.PlatformSearch = map[string][]string{}
-		}
-		out := []string{q}
-		for _, past := range h.a.settings.PlatformSearch[string(id)] {
-			if past != q && len(out) < 20 {
-				out = append(out, past)
-			}
-		}
-		h.a.settings.PlatformSearch[string(id)] = out
-		h.a.settings.save()
+	var history []string
+	switch h.a.platformID {
+	case platform.QQMusicID:
+		history = h.a.settings.QQMusic.SearchHistory
+	case platform.FnmusicID:
+		history = h.a.settings.FnMusic.SearchHistory
+	default:
+		h.a.rememberSearch(q)
 		return
 	}
-	h.a.rememberSearch(q)
+	out := []string{q}
+	for _, past := range history {
+		if past != q && len(out) < 20 {
+			out = append(out, past)
+		}
+	}
+	switch h.a.platformID {
+	case platform.QQMusicID:
+		h.a.settings.QQMusic.SearchHistory = out
+	case platform.FnmusicID:
+		h.a.settings.FnMusic.SearchHistory = out
+	}
+	h.a.settings.save()
 }
 
 func (h platformHost) SwitchPlatform(id platform.ID) { h.a.setPlatform(id) }
@@ -243,19 +254,20 @@ func (h platformHost) SharedSettings(c *ui.Context) {
 	if cap.Quality || cap.Normalize || cap.Comments {
 		group("播放", func() {
 			if cap.Quality {
+				levels := a.platformQualityLevels()
 				row("shared-quality", "音质", "下一首歌曲开始生效", func() {
-					labels := make([]string, len(qualityLevels))
-					chosen := s.Quality
-					for i, q := range qualityLevels {
+					labels := make([]string, len(levels))
+					chosen := a.qualityLevel()
+					for i, q := range levels {
 						labels[i] = q.label
-						if q.level == s.Quality {
+						if q.level == a.qualityLevel() {
 							chosen = q.label
 						}
 					}
 					if ui.Select(c.Key("shared-quality-select"), &chosen, labels).Label("音质").Width(150).Changed() {
-						for _, q := range qualityLevels {
+						for _, q := range levels {
 							if q.label == chosen {
-								s.Quality = q.level
+								a.setQualityLevel(q.level)
 							}
 						}
 						a.changed()
@@ -264,7 +276,9 @@ func (h platformHost) SharedSettings(c *ui.Context) {
 			}
 			if cap.Normalize {
 				row("shared-normalize", "音量均衡", "让不同歌曲听起来音量相近", func() {
-					if ui.Switch(c.Key("shared-normalize-switch"), &s.Normalize).Label("音量均衡").Changed() {
+					on := a.normalizeEnabled()
+					if ui.Switch(c.Key("shared-normalize-switch"), &on).Label("音量均衡").Changed() {
+						a.setNormalize(on)
 						a.pl.SetVolume(a.volume)
 						a.changed()
 					}
@@ -272,7 +286,9 @@ func (h platformHost) SharedSettings(c *ui.Context) {
 			}
 			if cap.Comments {
 				row("shared-hot-comments", "间奏时显示热评", "歌词空白处显示热门评论", func() {
-					if ui.Switch(c.Key("shared-hot-comments-switch"), &s.HotComments).Label("间奏时显示热评").Changed() {
+					on := a.hotCommentsEnabled()
+					if ui.Switch(c.Key("shared-hot-comments-switch"), &on).Label("间奏时显示热评").Changed() {
+						a.setHotComments(on)
 						a.changed()
 					}
 				})

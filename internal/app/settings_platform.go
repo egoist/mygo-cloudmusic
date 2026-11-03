@@ -17,10 +17,85 @@ import (
 // provider-specific values remain neutral seam types; validation and
 // interpretation belong to the provider adapter.
 type platformSettings struct {
-	Platform       string                       `json:"platform,omitempty"`
-	FnMusic        appplatform.PlatformSettings `json:"fnmusic,omitempty"`
-	QQMusic        appplatform.PlatformSettings `json:"qqmusic,omitempty"`
-	PlatformSearch map[string][]string          `json:"platformSearch,omitempty"`
+	Platform string                       `json:"platform,omitempty"`
+	FnMusic  appplatform.PlatformSettings `json:"fnmusic,omitempty"`
+	QQMusic  appplatform.PlatformSettings `json:"qqmusic,omitempty"`
+}
+
+// qqQuality keeps only the levels QQ can actually stream.
+func qqQuality(level string) string {
+	switch level {
+	case "standard", "exhigh", "lossless":
+		return level
+	case "higher":
+		return "exhigh"
+	case "hires":
+		return "lossless"
+	default:
+		return "exhigh"
+	}
+}
+
+func (a *app) qualityLevel() string {
+	if a.platformID == platform.QQMusicID {
+		if q := a.settings.QQMusic.Quality; q != "" {
+			return q
+		}
+		return "exhigh"
+	}
+	return a.settings.Quality
+}
+
+func (a *app) setQualityLevel(level string) {
+	if a.platformID == platform.QQMusicID {
+		a.settings.QQMusic.Quality = qqQuality(level)
+		return
+	}
+	a.settings.Quality = level
+}
+
+func (a *app) normalizeEnabled() bool {
+	if a.platformID == platform.QQMusicID {
+		if v := a.settings.QQMusic.Normalize; v != nil {
+			return *v
+		}
+		return true
+	}
+	return a.settings.Normalize
+}
+
+func (a *app) setNormalize(on bool) {
+	if a.platformID == platform.QQMusicID {
+		a.settings.QQMusic.Normalize = &on
+		return
+	}
+	a.settings.Normalize = on
+}
+
+func (a *app) hotCommentsEnabled() bool {
+	if a.platformID == platform.QQMusicID {
+		return a.settings.QQMusic.HotComments
+	}
+	return a.settings.HotComments
+}
+
+func (a *app) setHotComments(on bool) {
+	if a.platformID == platform.QQMusicID {
+		a.settings.QQMusic.HotComments = on
+		return
+	}
+	a.settings.HotComments = on
+}
+
+func (a *app) platformQualityLevels() []struct{ level, label string } {
+	if a.platformID == platform.QQMusicID {
+		return []struct{ level, label string }{
+			{"standard", "标准（128k）"},
+			{"exhigh", "极高（320k）"},
+			{"lossless", "无损（FLAC）"},
+		}
+	}
+	return qualityLevels
 }
 
 func (a *app) platformSettingsGroup(c *ui.Context, group func(string, func()), row func(string, string, func())) {

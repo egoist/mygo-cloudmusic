@@ -45,6 +45,14 @@ func (a *app) configurePlatformPlayer() {
 	// seam first prevents a previous provider from handling a later platform's
 	// track after a switch.
 	a.pl.PlatformPlayer = player.PlatformPlayer{}
+	// Quality and normalisation follow the active platform's own settings:
+	// QQ keeps them in its namespace, the others keep the shared ones.
+	if a.platformID == platform.QQMusicID {
+		a.pl.Quality, a.pl.Normalize = a.qualityLevel, a.normalizeEnabled
+	} else {
+		a.pl.Quality = func() string { return a.settings.Quality }
+		a.pl.Normalize = func() bool { return a.settings.Normalize }
+	}
 	if adapter := a.activePlatform(); adapter != nil {
 		adapter.ConfigurePlayer(a.pl)
 	}

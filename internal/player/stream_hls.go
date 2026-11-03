@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"sync"
+	"time"
 
 	gomp3 "github.com/hajimehoshi/go-mp3"
 )
@@ -33,9 +34,10 @@ type hlsStream struct {
 	closeOnce sync.Once
 }
 
-// hlsAhead is how many pieces are fetched ahead of the one decoded: a piece
-// plays for two seconds, and the next comes in a few milliseconds.
-const hlsAhead = 4
+// hlsAhead is how many pieces are fetched ahead of the one decoded: each
+// piece plays for two seconds, and buffering ahead protects against network
+// jitter while keeping memory usage modest.
+const hlsAhead = 32
 
 func openSegmentedStream(h SegmentedSource) (*hlsStream, error) {
 	if h == nil || h.SegmentCount() == 0 {
@@ -157,11 +159,27 @@ type pieceResult struct {
 
 func newPieceReader(h SegmentedSource, from int, prog *download, seen map[int]bool) *pieceReader {
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &pieceReader{cancel: cancel, pieces: make(chan pieceResult, hlsAhead)}
+	capacity := max(h.SegmentCount()-from, hlsAhead)
+	r := &pieceReader{cancel: cancel, pieces: make(chan pieceResult, capacity)}
 	go func() {
 		defer close(r.pieces)
 		for i := from; i < h.SegmentCount(); i++ {
-			b, err := h.FetchSegment(ctx, i)
+			var b []byte
+			var err error
+			for attempt := 0; attempt < 5; attempt++ {
+				b, err = h.FetchSegment(ctx, i)
+				if err == nil && len(b) > 0 {
+					break
+				}
+				if attempt == 4 && err == nil && len(b) == 0 {
+					err = io.ErrUnexpectedEOF
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(100*(1<<attempt)) * time.Millisecond):
+				}
+			}
 			if err == nil {
 				countPiece(prog, seen, i)
 			}

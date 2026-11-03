@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/mewkiz/flac"
@@ -108,6 +109,14 @@ func (s *flacStream) Read(dst []float32) (int, error) {
 		if err != nil {
 			if err == io.ErrUnexpectedEOF {
 				err = io.EOF
+			}
+			// When parsing fails at or near the end of stream (e.g. trailing ID3 tags or padding),
+			// treat it as clean EOF if we have already read all expected samples.
+			if s.info.NSamples > 0 && s.pos >= int64(s.info.NSamples) {
+				return 0, io.EOF
+			}
+			if strings.Contains(err.Error(), "invalid sync-code") && s.info.NSamples > 0 && s.pos+int64(s.info.BlockSizeMax) >= int64(s.info.NSamples) {
+				return 0, io.EOF
 			}
 			return 0, err
 		}

@@ -270,8 +270,9 @@ func newHTTPClient() *http.Client {
 		InsecureSkipVerify: true,
 		VerifyConnection:   verifyNamed,
 	}
+	tr.ResponseHeaderTimeout = 15 * time.Second
 	return &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout:   0,
 		Transport: tr,
 		// Never follow what is sent elsewhere, with a session in tow.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

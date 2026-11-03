@@ -149,9 +149,11 @@ type HLS struct {
 	Segments []Segment
 	Total    time.Duration
 
-	c    *Client
-	ref  string
-	once sync.Once
+	c           *Client
+	ref         string
+	playlistURL string
+	bitrate     int
+	once        sync.Once
 }
 
 // TranscodeHLS has the service transcode the track to MP3, and returns the
@@ -183,7 +185,7 @@ func (c *Client) TranscodeHLSWithBitrate(ctx context.Context, t *netease.Track, 
 			continue
 		}
 		if pl.end && len(pl.segments) > 0 {
-			h := &HLS{c: c, ref: t.Ref}
+			h := &HLS{c: c, ref: t.Ref, playlistURL: u, bitrate: bitrate}
 			for i, s := range pl.segments {
 				h.Segments = append(h.Segments, Segment{URL: s, Duration: pl.durations[i]})
 				h.Total += pl.durations[i]
@@ -201,6 +203,11 @@ func (c *Client) TranscodeHLSWithBitrate(ctx context.Context, t *netease.Track, 
 	}
 }
 
+func (h *HLS) renew(ctx context.Context) error {
+	_, err := h.c.transcode(h.ref, "mp3", h.bitrate)
+	return err
+}
+
 func trimFn(err error) error {
 	return errors.New(strings.TrimPrefix(err.Error(), "fnmusic: "))
 }
@@ -211,10 +218,28 @@ func (h *HLS) Fetch(ctx context.Context, i int) ([]byte, error) {
 		return nil, io.EOF
 	}
 	b, err := h.c.fetch(ctx, h.Segments[i].URL)
+	if err != nil && isGone(err) {
+		// Session expired on server; renew transcode session and retry once
+		if renewErr := h.renew(ctx); renewErr == nil {
+			b, err = h.c.fetch(ctx, h.Segments[i].URL)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	return audioOf(b), nil
+	audio := audioOf(b)
+	if len(audio) == 0 && len(b) > 0 {
+		return nil, fmt.Errorf("fnmusic: empty audio payload in segment %d (%d bytes)", i, len(b))
+	}
+	return audio, nil
+}
+
+func isGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "410") || strings.Contains(msg, "Gone")
 }
 
 // Release lets the service go of the transcoding it keeps, which it ends by

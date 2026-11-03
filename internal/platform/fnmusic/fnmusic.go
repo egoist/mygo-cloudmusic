@@ -2,6 +2,7 @@ package fnmusic
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
@@ -449,12 +450,20 @@ func (c *Client) callWith(replay bool, method, path string, q url.Values, payloa
 // callBody asks as build makes the request, signed in, and once more signed
 // in again if the session ended.
 func (c *Client) callBody(replay bool, method, path string, q url.Values, build func(token string) (*http.Request, error), out any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	for retry := false; ; retry = true {
 		token, err := c.session()
 		if err != nil {
 			return err
 		}
-		res, err := c.sendWith(func() (*http.Request, error) { return build(token) }, replay)
+		res, err := c.sendWith(func() (*http.Request, error) {
+			req, err := build(token)
+			if err != nil {
+				return nil, err
+			}
+			return req.WithContext(ctx), nil
+		}, replay)
 		if err == nil {
 			err = decode(res, out)
 		}

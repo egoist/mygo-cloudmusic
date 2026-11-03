@@ -584,6 +584,57 @@ func TestTranscodeHLS(t *testing.T) {
 	}
 }
 
+// A transcoded stream recovers from an expired session by renewing on 410 Gone.
+func TestTranscodeHLSRecovery(t *testing.T) {
+	hlsPoll = time.Millisecond
+	defer func() {
+		hlsPoll = time.Second
+	}()
+	s := &server{}
+	var renews atomic.Int32
+	var expired atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/music/api/v1/track/transcode", func(w http.ResponseWriter, r *http.Request) {
+		renews.Add(1)
+		expired.Store(false)
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]string{"url": "/music/api/v1/hls/abc/index.m3u8"}})
+	})
+	mux.HandleFunc("/music/api/v1/track/transcode/quit", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"code": 0})
+	})
+	mux.HandleFunc("/music/api/v1/hls/abc/index.m3u8", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("#EXTM3U\n#EXTINF:2.0,\nseg0.ts\n#EXT-X-ENDLIST\n"))
+	})
+	mux.HandleFunc("/music/api/v1/hls/abc/seg0.ts", func(w http.ResponseWriter, r *http.Request) {
+		if expired.Load() {
+			http.Error(w, "Gone", 410)
+			return
+		}
+		w.Write(tsPackets(mp3Frames(100, 1)))
+	})
+	mux.Handle("/", s)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c, _ := New(Config{Address: ts.URL, Username: "me", PassHash: HashPassword("secret")})
+	tr := &netease.Track{Ref: "g1", Format: "m4a", Source: Source}
+	h, err := c.TranscodeHLS(context.Background(), tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Release()
+
+	// Simulate 410 Gone on segment fetch; Fetch should renew the session and succeed
+	expired.Store(true)
+	b, err := h.Fetch(context.Background(), 0)
+	if err != nil || len(b) == 0 {
+		t.Fatalf("fetch after 410 failed: %v", err)
+	}
+	if renews.Load() < 2 {
+		t.Errorf("recovery did not call renew: got %d renews", renews.Load())
+	}
+}
+
 // Transcode modes choose native playback, conversion for unsupported files,
 // or conversion for every Feiniu track as configured.
 func TestTranscodeModes(t *testing.T) {

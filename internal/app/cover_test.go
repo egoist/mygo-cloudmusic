@@ -123,3 +123,16 @@ func TestCoverSlidesWithTheSong(t *testing.T) {
 		}
 	}
 }
+
+// A cover shorter than the controls keeps them their width, and used to sit
+// at that column's left edge; it stays centered over them.
+func TestShortCoverStaysCenteredOverTheControls(t *testing.T) {
+	_, _, r := coverApp(t)
+	if r.W >= npControlsWidth-1 {
+		t.Fatalf("the cover is %v wide, no shorter than the controls, so nothing is centered", r)
+	}
+	want := npSideX(860) + (npControlsWidth-r.W)/2
+	if r.X < want-1 || r.X > want+1 {
+		t.Errorf("the cover sits at %v, not centered over the controls at %v", r.X, want)
+	}
+}

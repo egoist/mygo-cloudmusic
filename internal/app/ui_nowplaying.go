@@ -157,8 +157,8 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 		coverSize := min(side, h-436)
 		// The column is as wide as the cover, for the cover, what plays
 		// and the tabs over it to start at one edge, but wide enough for
-		// the controls.
-		side = max(coverSize, 280)
+		// the controls; a cover shorter than that stays in the middle.
+		side = max(coverSize, npControlsWidth)
 		padX := npSideX(w)
 		reveal(npTabsRow(c, w), pointerIn).Children(func() { a.paneTabs(c) })
 		ui.Row(c).Grow(1).Padding(0, padX, 44, padX).Gap(72).AlignItems(ui.Stretch).Children(func() {
@@ -241,6 +241,10 @@ const npMaxWidth = 1280
 func npSideX(w float32) float32 {
 	return max(72, (w-npMaxWidth)/2)
 }
+
+// npControlsWidth is how wide the controls under the cover are, at least:
+// the column keeps it even when a short cover leaves room to spare.
+const npControlsWidth = 280
 
 // npTabsHeight is how tall the row of Now Playing's tabs is, for what is
 // under it to start below it.

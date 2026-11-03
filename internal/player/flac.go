@@ -215,3 +215,6 @@ func (s *flacStream) Close() error {
 }
 
 func (s *flacStream) source() (*download, *spectrum) { return s.dl, s.spec }
+
+// cut returns why the download was cut off, or nil: the song itself ended.
+func (s *flacStream) cut() error { return s.dl.Err() }

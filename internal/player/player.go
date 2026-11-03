@@ -13,6 +13,14 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
+// asker says where a track streams from, at a level.
+type asker func(id int64, level string) (*netease.Stream, error)
+
+// songURL is where a track streams from: what the API says, or what the
+// tests serve. A load takes it here, on the main thread, as its goroutine
+// outlives the call that started it.
+var songURL asker = netease.SongURL
+
 type RepeatMode int
 
 const (
@@ -62,6 +70,14 @@ type Player struct {
 	err     string
 	gen     int // counts loads, to drop the results of stale ones
 
+	// ahead is the next track's download, fetched while this one plays,
+	// so that it starts at once when this one ends: nil without one.
+	ahead *ahead
+	// tries counts the times the current track was tried again, as its load
+	// failed, or its download was cut off: it starts over with another
+	// track, so that a song that keeps breaking off is left where it is.
+	tries int
+
 	lyrics       []lyrics.Line
 	lyricsLoaded bool
 
@@ -72,6 +88,15 @@ type Player struct {
 	seeking bool
 	seekTo  time.Duration
 	seekGen int
+}
+
+// ahead is a track's download, fetched while the one before it plays: the
+// cache keeps it, and it is read from there when it plays.
+type ahead struct {
+	id    int64 // the track's
+	level string
+	dl    *download
+	info  *netease.Stream
 }
 
 func New(post func(func())) *Player {
@@ -428,6 +453,7 @@ func (p *Player) TogglePlay() {
 			p.playing = !p.playing
 			p.sync()
 		case len(p.order) > 0:
+			p.tries = 0
 			p.loadSkipping(max(p.at, 0), 0, true, p.pending)
 		}
 		return
@@ -454,6 +480,9 @@ func (p *Player) TogglePlay() {
 		out.Play()
 	}
 	p.fade.fade(1, fadeIn, nil)
+	// A session picked up again was loaded paused: its next track may
+	// still be fetched while this one plays.
+	p.prefetch(p.at + 1)
 	p.sync()
 }
 
@@ -571,17 +600,23 @@ func (p *Player) stop() {
 
 // load plays the track at order[at], skipping those that cannot play.
 func (p *Player) load(at int) {
+	p.tries = 0
 	p.loadSkipping(at, 0, true, 0)
 }
 
 // loadSkipping loads the track at order[at], to play or not, from from,
 // skipping those that cannot play: skipped of them so far.
 func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
+	t := p.queue[p.order[at]]
 	p.stop()
 	p.gen++
 	gen := p.gen
+	// What was fetched ahead plays at once, unless it is of another level
+	// than the one asked for now.
+	level := p.level()
+	ahead := p.takeAhead(t.ID, level)
+	ask := songURL
 	p.at = at
-	t := p.queue[p.order[at]]
 	p.track = &t
 	p.loading, p.playing, p.err = true, play, ""
 	p.awaiting = false
@@ -615,11 +650,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 		})
 	}()
 	go func() {
-		level := "exhigh"
-		if p.Quality != nil {
-			level = p.Quality()
-		}
-		info, s, err := p.open(t, level)
+		info, s, err := p.open(t, level, ahead, ask)
 		p.post(func() {
 			if gen != p.gen {
 				if s != nil {
@@ -629,41 +660,23 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			}
 			p.loading = false
 			if err != nil {
-				p.err = err.Error()
-				switch {
-				case err != netease.ErrUnavailable:
-				case t.ProgramID != 0:
-					p.err = "这期节目需要购买才能收听"
-				default:
-					p.err = "这首歌需要 VIP 才能播放"
-				}
-				// Skip what cannot play, unless nothing in the queue can.
-				if skipped+1 < len(p.order) {
-					next := at + 1
-					if next >= len(p.order) {
-						next = 0
-					}
-					p.loadSkipping(next, skipped+1, p.playing, 0)
-				} else {
-					p.playing = false
-					p.sync()
-				}
+				p.failed(at, skipped, t, from, err)
 				return
 			}
 			p.stream, p.info = s, info
 			p.gain = normGain(info)
 			p.out = audio.NewPlayer(s)
 			// From its middle, as a session picked up again, it fades in.
-			level := 1.0
+			lvl := 1.0
 			if p.pending > 0 {
-				level = 0
+				lvl = 0
 			}
-			p.fade.attach(p.out, level)
+			p.fade.attach(p.out, lvl)
 			p.applyGain()
 			p.out.OnEnd(func() {
 				p.post(func() {
 					if gen == p.gen {
-						p.ended()
+						p.cutOff()
 					}
 				})
 			})
@@ -675,22 +688,180 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				p.out.Play()
 				p.fade.fade(1, fadeIn, nil)
 			}
+			// The one after it is fetched while this one plays, so that
+			// it starts at once when this one ends.
+			p.prefetch(at + 1)
 			p.sync()
 		})
 	}()
 }
 
-// open opens track t's audio at level: kept in the cache, or else
-// streamed into it, and kept once it has all come in.
-func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, error) {
-	dl, info, ok := p.Cache.lookup(t.ID, level)
-	if !ok {
-		var err error
-		info, err = netease.SongURL(t.ID, level)
-		if err != nil {
-			return nil, nil, err
+// failed handles a track that could not be loaded: tried again if it may
+// come now, skipped if it cannot play at all, and else left where it is
+// for the listener to play again.
+func (p *Player) failed(at, skipped int, t netease.Track, from time.Duration, err error) {
+	if err != netease.ErrUnavailable {
+		// What did not come now may come again: a stream URL gone stale,
+		// or a connection dropped, is asked for again a moment later.
+		if p.tries < loadTries {
+			p.retry(at, skipped, from)
+			return
 		}
-		dl = p.Cache.download(t.ID, info)
+		p.err = "加载失败，请重试"
+		p.playing = false
+		p.sync()
+		return
+	}
+	if t.ProgramID != 0 {
+		p.err = "这期节目需要购买才能收听"
+	} else {
+		p.err = "这首歌需要 VIP 才能播放"
+	}
+	// Skip what cannot play, unless nothing in the queue can.
+	if skipped+1 < len(p.order) {
+		next := at + 1
+		if next >= len(p.order) {
+			next = 0
+		}
+		p.tries = 0
+		p.loadSkipping(next, skipped+1, p.playing, 0)
+		return
+	}
+	p.playing = false
+	p.sync()
+}
+
+// loadTries is how many times a track is tried again before it is left for
+// the listener to play again.
+const loadTries = 2
+
+// retry loads the track at at again in a moment, still loading as it
+// waits: a stream URL gone stale, or a connection dropped, may work once
+// more.
+func (p *Player) retry(at, skipped int, from time.Duration) {
+	p.tries++
+	p.loading = true
+	gen, tries := p.gen, p.tries
+	time.AfterFunc(retryGap(tries), func() {
+		p.post(func() {
+			if gen == p.gen {
+				p.loadSkipping(at, skipped, p.playing, from)
+			}
+		})
+	})
+	p.sync()
+}
+
+// retryGap is how long the try after n tries waits: a moment longer each
+// time, for a network that may be back by then.
+func retryGap(n int) time.Duration { return (400 << (n - 1)) * time.Millisecond }
+
+// cutOff runs as what plays comes to its end: the song's, or the
+// download's, cut off, which is played again from where it stopped.
+func (p *Player) cutOff() {
+	if p.stream == nil || p.stream.cut() == nil {
+		p.ended()
+		return
+	}
+	if p.tries < loadTries {
+		p.retry(p.at, 0, p.Position())
+		return
+	}
+	// It cannot be had: stop where it stopped, for the listener to play
+	// again.
+	p.err = "播放中断，请重试"
+	p.playing = false
+	p.pending = p.Position()
+	p.stop()
+	p.sync()
+}
+
+// prefetch fetches the track at order[at] once this one has come in whole,
+// into the cache, so that it starts at once when it is played: what it
+// cannot fetch is fetched again then.
+func (p *Player) prefetch(at int) {
+	if at < 0 || at >= len(p.order) || !p.playing {
+		p.dropAhead()
+		return
+	}
+	t := p.queue[p.order[at]]
+	level := p.level()
+	if a := p.ahead; a != nil && a.id == t.ID && a.level == level {
+		return // fetched already, or coming in
+	}
+	p.dropAhead()
+	gen := p.gen
+	ask := songURL
+	// What plays comes in first: fetching the one after it sooner would
+	// take the bytes of the song being played, which is what stutters.
+	now := p.stream
+	go func() {
+		if now != nil {
+			if playing, _ := now.source(); playing != nil {
+				playing.waitFor(playing.size)
+				if playing.Err() != nil {
+					// Let go of, not come in whole: it is not this one's
+					// turn to be fetched ahead.
+					return
+				}
+			}
+		}
+		info, err := ask(t.ID, level)
+		if err != nil || !p.Cache.Holds(info) {
+			// Not a song the cache would keep: fetching it now would
+			// spend its bytes for nothing, as it would come in vain.
+			return
+		}
+		dl := p.Cache.download(t.ID, info)
+		p.post(func() {
+			if gen != p.gen || p.ahead != nil {
+				dl.Close()
+				return
+			}
+			p.ahead = &ahead{id: t.ID, level: level, dl: dl, info: info}
+		})
+	}()
+}
+
+// takeAhead returns the track fetched ahead, if it plays as id at level,
+// and lets go of what was fetched for another track, or another level.
+func (p *Player) takeAhead(id int64, level string) *ahead {
+	a := p.ahead
+	p.ahead = nil
+	if a == nil {
+		return nil
+	}
+	if a.id != id || a.level != level {
+		a.dl.Close()
+		return nil
+	}
+	return a
+}
+
+// dropAhead lets go of the track fetched ahead, if any.
+func (p *Player) dropAhead() {
+	a := p.ahead
+	p.ahead = nil
+	if a != nil {
+		a.dl.Close()
+	}
+}
+
+// level returns the stream level to load, as the settings say.
+func (p *Player) level() string {
+	if p.Quality != nil {
+		return p.Quality()
+	}
+	return "exhigh"
+}
+
+// open opens track t's audio at level: from what was fetched ahead of it,
+// kept in the cache, or else streamed into it, and kept once it has all
+// come in. ask is where its URL comes from, taken on the main thread.
+func (p *Player) open(t netease.Track, level string, ahead *ahead, ask asker) (*netease.Stream, stream, error) {
+	dl, info, err := p.fetch(t, level, ahead, ask)
+	if err != nil {
+		return nil, nil, err
 	}
 	s, err := openStream(dl, t.Duration)
 	if err != nil {
@@ -698,6 +869,27 @@ func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, e
 		return nil, nil, err
 	}
 	return info, s, nil
+}
+
+// fetch returns the download of track t at level, and what it streams: the
+// one fetched ahead, the one the cache keeps, or one started now.
+func (p *Player) fetch(t netease.Track, level string, ahead *ahead, ask asker) (*download, *netease.Stream, error) {
+	if ahead != nil {
+		if ahead.dl.Err() == nil {
+			return ahead.dl, ahead.info, nil
+		}
+		// Cut off before it played: asked for again, from its start.
+		ahead.dl.Close()
+	}
+	dl, info, ok := p.Cache.lookup(t.ID, level)
+	if ok {
+		return dl, info, nil
+	}
+	info, err := ask(t.ID, level)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p.Cache.download(t.ID, info), info, nil
 }
 
 // Session is where playback was left, to pick up again.
@@ -743,5 +935,6 @@ func (p *Player) Restore(s Session) {
 	}
 	p.queue, p.order = s.Queue, s.Order
 	p.shuffle, p.repeat = s.Shuffle, s.Repeat%3
+	p.tries = 0
 	p.loadSkipping(s.At, 0, false, time.Duration(s.Position)*time.Millisecond)
 }

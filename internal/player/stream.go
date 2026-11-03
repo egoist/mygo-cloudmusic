@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo/audio"
 	gomp3 "github.com/hajimehoshi/go-mp3"
@@ -57,7 +58,7 @@ func startDownload(url string, size int64, part *os.File, keep func(string, int6
 	case size > 0:
 		d.data = make([]byte, 0, prealloc(size))
 	}
-	go d.run(ctx, url)
+	go d.run(ctx, url, stallGap)
 	return d
 }
 
@@ -83,7 +84,12 @@ func opened(f *os.File, size int64) *download {
 	return d
 }
 
-func (d *download) run(ctx context.Context, url string) {
+// stallGap is how long a download may bring nothing before it is given up
+// on: a connection that stopped sending, which asking again may mend. A
+// download takes it as it starts, on the goroutine that starts it.
+var stallGap = 15 * time.Second
+
+func (d *download) run(ctx context.Context, url string, gap time.Duration) {
 	defer d.release()
 	finish := func(err error) {
 		d.mu.Lock()
@@ -91,6 +97,10 @@ func (d *download) run(ctx context.Context, url string) {
 		d.cond.Broadcast()
 		d.mu.Unlock()
 	}
+	// What stops coming is a connection gone, and what comes is given up on,
+	// so that the song may be asked for again.
+	stall := time.AfterFunc(gap, d.cancel)
+	defer stall.Stop()
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		finish(err)
@@ -111,6 +121,7 @@ func (d *download) run(ctx context.Context, url string) {
 	for {
 		n, err := res.Body.Read(buf)
 		if n > 0 {
+			stall.Reset(gap)
 			d.write(buf[:n])
 		}
 		if err == io.EOF {
@@ -237,6 +248,17 @@ func (d *download) Progress() float64 {
 	return float64(d.n) / float64(d.size)
 }
 
+// Err returns why the download stopped before the whole song came in, or
+// nil: it came in whole, or still comes in.
+func (d *download) Err() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.done {
+		return nil
+	}
+	return d.err
+}
+
 // waitFor waits until n bytes are in, or the download ended, and returns
 // how many there are.
 func (d *download) waitFor(n int64) int64 {
@@ -322,6 +344,9 @@ type stream interface {
 	Close() error
 	// source returns the download decoded, and its spectrum.
 	source() (*download, *spectrum)
+	// cut returns why the download was cut off, or nil: the song itself
+	// ended.
+	cut() error
 }
 
 // openStream opens the song dl fetches, MP3 or FLAC, as its first bytes
@@ -460,6 +485,9 @@ func (s *mp3Stream) SetPosition(frame int64) error {
 }
 
 func (s *mp3Stream) source() (*download, *spectrum) { return s.dl, s.spec }
+
+// cut returns why the download was cut off, or nil: the song itself ended.
+func (s *mp3Stream) cut() error { return s.dl.Err() }
 
 func (s *mp3Stream) Close() error {
 	s.closeMu.Do(s.drop)

@@ -337,3 +337,28 @@ func TestStreamSizeIsNotTrusted(t *testing.T) {
 		t.Errorf("set aside %d bytes", n)
 	}
 }
+
+// A download that stops sending is given up on, so that the song may be
+// asked for again, rather than waited on forever.
+func TestStalledDownloadIsGivenUpOn(t *testing.T) {
+	old := stallGap
+	stallGap = 100 * time.Millisecond
+	defer func() { stallGap = old }()
+	// It promises a song and sends none, as a connection gone quiet does.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	dl := startDownload(srv.URL, 1024, nil, nil)
+	defer dl.Close()
+	if n := dl.waitFor(1); n != 0 {
+		t.Errorf("got %d bytes", n)
+	}
+	if err := dl.Err(); err == nil {
+		t.Error("asks for the rest, as if the connection were fine")
+	}
+}

@@ -14,7 +14,7 @@ func liveSearchAccount(t *testing.T) Session {
 	if os.Getenv("LIVE") == "" || os.Getenv("LIVE_SEARCH_ACCOUNT") != "1" {
 		t.Skip("set LIVE=1 LIVE_SEARCH_ACCOUNT=1 to read Lilt's saved session for QQ search")
 	}
-	b, err := mygo.Secrets.Service("dev.amamiya.qqmusic").Get(qqSessionSecret)
+	b, err := mygo.Secrets.Service(sessionService).Get(qqSessionSecret)
 	if err != nil {
 		t.Fatal("read Lilt session:", err)
 	}

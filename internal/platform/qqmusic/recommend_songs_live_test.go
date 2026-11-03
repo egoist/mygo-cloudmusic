@@ -84,7 +84,7 @@ func TestLiveRecommendedSongShelves(t *testing.T) {
 	}
 	// Test binaries do not carry the packaged app identifier. Use the same
 	// explicit credential service as the account search integration tests.
-	b, err := mygo.Secrets.Service("dev.amamiya.qqmusic").Get(qqSessionSecret)
+	b, err := mygo.Secrets.Service(sessionService).Get(qqSessionSecret)
 	if err != nil {
 		t.Fatal("cannot read the saved Lilt session")
 	}

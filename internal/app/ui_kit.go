@@ -22,6 +22,7 @@ type palette struct {
 	hover     ui.Color
 	press     ui.Color
 	accent    ui.Color
+	like      ui.Color // hearts, which stay red on a platform with another accent
 	onAccent  ui.Color
 	cardShade ui.Color
 }
@@ -39,6 +40,7 @@ func paletteFor(t *ui.Theme) palette {
 			hover:     ui.RGBA(255, 255, 255, 0.06),
 			press:     ui.RGBA(255, 255, 255, 0.1),
 			accent:    ui.Oklch(0.66, 0.2, 22),
+			like:      ui.Oklch(0.66, 0.2, 22),
 			onAccent:  ui.Hex("#ffffff"),
 			cardShade: ui.RGBA(0, 0, 0, 0.45),
 		}
@@ -53,6 +55,7 @@ func paletteFor(t *ui.Theme) palette {
 		hover:     ui.RGBA(0, 0, 0, 0.04),
 		press:     ui.RGBA(0, 0, 0, 0.08),
 		accent:    ui.Oklch(0.6, 0.21, 24),
+		like:      ui.Oklch(0.6, 0.21, 24),
 		onAccent:  ui.Hex("#ffffff"),
 		cardShade: ui.RGBA(0, 0, 0, 0.16),
 	}

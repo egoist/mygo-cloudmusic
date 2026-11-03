@@ -24,6 +24,7 @@ const (
 // Player plays a queue of tracks. Its methods run on the main thread;
 // loading happens on goroutines, whose results post brings back there.
 type Player struct {
+	PlatformPlayer
 	post func(func())
 	// Quality returns the stream level to load, as the settings say.
 	Quality func() string
@@ -249,7 +250,9 @@ func (p *Player) refill() {
 			return
 		}
 		p.feeding = false
-		p.appendTracks(more)
+		if !p.acceptRefill(more) {
+			return
+		}
 		switch {
 		case !p.awaiting:
 		case p.at+1 < len(p.order):
@@ -447,6 +450,7 @@ func (p *Player) TogglePlay() {
 		return
 	}
 	p.playing = true
+	p.markStarted()
 	if !p.seeking && !out.Playing() {
 		if out.Position() >= out.Duration()-time.Second {
 			out.Seek(0)
@@ -583,7 +587,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.at = at
 	t := p.queue[p.order[at]]
 	p.track = &t
-	p.loading, p.playing, p.err = true, play, ""
+	p.loading, p.playing, p.started, p.err = true, play, false, ""
 	p.awaiting = false
 	p.lyrics, p.lyricsLoaded = nil, false
 	p.pending = from
@@ -591,7 +595,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.refill()
 
 	go func() {
-		cover, err := netease.Fetch(netease.Sized(t.Album.PicURL, 600))
+		cover, err := p.resolveArtwork(&t)
 		if err == nil {
 			p.post(func() {
 				if gen == p.gen {
@@ -602,7 +606,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	}()
 
 	go func() {
-		lrc, trans, yrc, err := netease.Lyrics(t.ID)
+		lrc, trans, yrc, err := p.resolveLyrics(&t)
 		var lines []lyrics.Line
 		if err == nil {
 			lines = lyrics.Build(lrc, trans, yrc)
@@ -637,8 +641,10 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				default:
 					p.err = "这首歌需要 VIP 才能播放"
 				}
-				// Skip what cannot play, unless nothing in the queue can.
-				if skipped+1 < len(p.order) {
+				// Skip what cannot play, unless nothing in the queue can, or
+				// a few in a row could not: a NAS gone away fails every
+				// song, which then flew by one after another.
+				if skipped+1 < min(len(p.order), maxSkipped) {
 					next := at + 1
 					if next >= len(p.order) {
 						next = 0
@@ -674,6 +680,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			if p.playing {
 				p.out.Play()
 				p.fade.fade(1, fadeIn, nil)
+				p.markStarted()
 			}
 			p.sync()
 		})
@@ -683,10 +690,13 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 // open opens track t's audio at level: kept in the cache, or else
 // streamed into it, and kept once it has all come in.
 func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, error) {
+	if info, decoded, err, handled := p.resolveAudio(&t, level); handled {
+		return info, decoded, err
+	}
 	dl, info, ok := p.Cache.lookup(t.ID, level)
 	if !ok {
 		var err error
-		info, err = netease.SongURL(t.ID, level)
+		info, err = p.resolveStream(&t, level)
 		if err != nil {
 			return nil, nil, err
 		}

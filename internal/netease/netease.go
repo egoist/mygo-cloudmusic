@@ -34,6 +34,7 @@ type Album struct {
 }
 
 type Track struct {
+	PlatformTrack
 	ID       int64    `json:"id"`
 	Name     string   `json:"name"`
 	Artists  []Artist `json:"ar"`
@@ -101,6 +102,9 @@ func (t *Track) Length() time.Duration { return time.Duration(t.Duration) * time
 
 // URL is the track's page on the NetEase website.
 func (t *Track) URL() string {
+	if !usesNetEaseURL(t) {
+		return ""
+	}
 	if t.ProgramID > 0 {
 		return apiBase + "/program?id=" + strconv.FormatInt(t.ProgramID, 10)
 	}
@@ -117,6 +121,7 @@ func (t *Track) Thread() string {
 }
 
 type Playlist struct {
+	PlatformPlaylist
 	ID          int64   `json:"id"`
 	Name        string  `json:"name"`
 	CoverURL    string  `json:"coverImgUrl"`
@@ -389,6 +394,7 @@ var ErrUnavailable = errors.New("this song isn't available to stream")
 
 // Stream is where a track streams from, and what it is.
 type Stream struct {
+	PlatformStream
 	URL  string `json:"-"`
 	Size int64  `json:"size"` // in bytes
 	// Type is the format: mp3, or flac for the lossless levels.
@@ -486,6 +492,9 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 func Sized(pic string, n int) string {
 	if pic == "" {
 		return ""
+	}
+	if sized, ok := platformSized(pic, n); ok {
+		return sized
 	}
 	pic = strings.Replace(pic, "http://", "https://", 1)
 	return fmt.Sprintf("%s?param=%dy%d", pic, n, n)

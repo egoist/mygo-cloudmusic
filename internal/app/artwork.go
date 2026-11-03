@@ -46,6 +46,7 @@ type artCache struct {
 	now   func() time.Time
 	size  int // the bytes the covers in art keep
 	limit int
+	artPlatformState
 }
 
 // artLimit is how many bytes of covers the cache keeps. A cover keeps its
@@ -55,7 +56,7 @@ type artCache struct {
 const artLimit = 64 << 20
 
 func newArtCache(post func(func())) *artCache {
-	return &artCache{art: map[string]*artwork{}, gone: map[string]weak.Pointer[artwork]{}, busy: map[string]bool{}, sem: make(chan struct{}, 8), post: post, now: time.Now, limit: artLimit}
+	return &artCache{art: map[string]*artwork{}, gone: map[string]weak.Pointer[artwork]{}, busy: map[string]bool{}, sem: make(chan struct{}, 8), post: post, now: time.Now, limit: artLimit, artPlatformState: newArtPlatformState()}
 }
 
 // add keeps a cover, and drops those asked for least recently once the
@@ -112,9 +113,10 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 		return nil
 	}
 	c.busy[key] = true
+	gen := c.artworkGeneration()
 	go func() {
 		c.sem <- struct{}{}
-		bmp, img, size, err := loadArt(url)
+		bmp, img, size, err := loadArtWith(url, c.fetch)
 		<-c.sem
 		var blurred *image.RGBA
 		var tint ui.Color
@@ -126,6 +128,9 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 		}
 		c.post(func() {
 			delete(c.busy, key)
+			if c.discardStaleArtwork(gen, bmp) {
+				return
+			}
 			if err != nil {
 				c.add(key, &artwork{failed: true, used: c.now()})
 				return

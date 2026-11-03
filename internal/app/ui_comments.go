@@ -40,7 +40,11 @@ const commentPage = 30
 func (a *app) commentsFor(tr *netease.Track) *commentState {
 	cs := &a.comments
 	if cs.track != tr.ID {
-		*cs = commentState{track: tr.ID, thread: tr.Thread()}
+		thread := tr.Thread()
+		if src := a.platformComments(); src != nil {
+			thread = src.CommentThread(tr)
+		}
+		*cs = commentState{track: tr.ID, thread: thread}
 		a.loadComments()
 	}
 	return cs
@@ -53,9 +57,13 @@ func (a *app) loadComments() {
 		return
 	}
 	thread, offset := cs.thread, len(cs.latest)
+	load := threadComments
+	if src := a.platformComments(); src != nil {
+		load = src.Comments
+	}
 	cs.loading, cs.err = true, ""
 	go func() {
-		page, err := threadComments(thread, offset, commentPage)
+		page, err := load(thread, offset, commentPage)
 		a.post(func() {
 			if cs.thread != thread {
 				return
@@ -251,7 +259,13 @@ func (a *app) commentRow(c *ui.Context, cm *netease.Comment, now time.Time) {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, cm.User.Nickname).FontSize(13).FontWeight(600).TextColor(white.Alpha(0.6)).SingleLine().Shrink(1).MinWidth(0)
 				ui.Spacer(c)
-				a.commentLike(c.Key("like"), cm)
+				if a.platformComments() != nil {
+					if cm.LikedCount > 0 {
+						ui.Text(c, count(cm.LikedCount)+" 赞").FontSize(12).TextColor(white.Alpha(0.6))
+					}
+				} else {
+					a.commentLike(c.Key("like"), cm)
+				}
 			})
 			ui.Text(c, cm.Content).FontSize(15).LineHeight(1.55).TextColor(white.Alpha(0.92))
 			if len(cm.BeReplied) > 0 {

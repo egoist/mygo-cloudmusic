@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 
+	appplatform "netease-music-mygo/internal/app/platform"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -15,6 +16,7 @@ const sidebarWidth = 232
 func (a *app) view(c *ui.Context) {
 	t := *c.Theme()
 	a.pal = paletteFor(&t)
+	a.platformAccent(&a.pal)
 	p := a.pal
 	t.Accent, t.AccentText = p.accent, p.onAccent
 	t.Selection = p.accent.Alpha(0.3)
@@ -51,11 +53,11 @@ func (a *app) view(c *ui.Context) {
 			if !c.Vibrancy() {
 				side.Background(p.sidebar)
 			}
-			side.Children(func() { a.sidebar(c) })
+			side.Children(func() { a.platformSidebar(c) })
 			// Keyed, so that a popover of the sidebar opening or closing
 			// keeps what the page and its bars hold, their edges' fades.
 			ui.Box(c.Key("main")).Grow(1).Background(p.bg).BorderWidth(0, 0, 0, 1).BorderColor(p.hairline).Children(func() {
-				a.content(c)
+				a.platformContent(c)
 				// The bars float over the page, which scrolls under them:
 				// positioned, they paint over it.
 				a.pageTop(c)
@@ -145,6 +147,12 @@ func (a *app) back() {
 		a.nowPlaying = false
 		return
 	}
+	if home := a.activeHome(); home != nil {
+		home.Back()
+		a.platformRoute = appplatform.Route{}
+		a.redraw()
+		return
+	}
 	if len(a.history) == 0 {
 		return
 	}
@@ -157,6 +165,12 @@ func (a *app) back() {
 // goForward goes to the page back left, as the forward button of a mouse
 // does.
 func (a *app) goForward() {
+	if home := a.activeHome(); home != nil {
+		home.Forward()
+		a.platformRoute = appplatform.Route{}
+		a.redraw()
+		return
+	}
 	if len(a.forward) == 0 {
 		return
 	}
@@ -197,6 +211,7 @@ func (a *app) sidebar(c *ui.Context) {
 			a.sidebarNowPlaying(c, tr)
 		}
 		a.accountRow(c)
+		a.platformSwitcher(c)
 	})
 }
 
@@ -321,6 +336,9 @@ func edgeShown(el ui.Element, under bool) float32 {
 // the back button once there is a page to go back to.
 func (a *app) pageTop(c *ui.Context) {
 	top, _ := a.insets(c)
+	if a.activeHome() != nil && a.platformPageTop(c) {
+		return
+	}
 	edge := ui.Box(c.Key("top-edge")).Absolute().Top(0).Left(0).Right(0).Height(top).DragWindow().
 		Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
 	edge.Opacity(edgeShown(edge, a.underTop))

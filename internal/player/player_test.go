@@ -53,6 +53,26 @@ func next(t *testing.T, ch chan func()) {
 	}
 }
 
+// A track is reported once when it starts, not again when resumed.
+func TestStartedReportsOnce(t *testing.T) {
+	ch, p := posted()
+	defer p.out.Close()
+	var started []int64
+	p.Started = func(tr *netease.Track) { started = append(started, tr.ID) }
+	p.TogglePlay()
+	next(t, ch)
+	p.TogglePlay()
+	if len(started) != 1 || started[0] != 1 {
+		t.Fatalf("started = %v", started)
+	}
+	p.TogglePlay()
+	next(t, ch)
+	p.TogglePlay()
+	if len(started) != 1 {
+		t.Fatalf("resume reported again: %v", started)
+	}
+}
+
 // Pausing fades out before the music stops; playing again fades it in.
 func TestPauseFades(t *testing.T) {
 	ch, p := posted()

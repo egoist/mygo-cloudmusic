@@ -102,7 +102,7 @@ func (a *app) nowPlayingView(c *ui.Context) {
 
 func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, accent ui.Color, w, h float32, pointerIn bool) {
 	pl := a.pl
-	a.commentsFor(tr)
+	a.preparePlatformNowPlaying(tr)
 	// An episode has what it is about and its captions in place of lyrics;
 	// a song, lyrics in place of those.
 	switch program := tr.ProgramID != 0; {
@@ -299,9 +299,9 @@ func (a *app) npTabs() []npTab {
 		if a.captionsShown() {
 			tabs = append(tabs, npTab{paneCaptions, "字幕"})
 		}
-		return append(tabs, npTab{paneQueue, "待播清单"}, npTab{paneComments, "评论"})
+		return a.appendPlatformNPTabs(append(tabs, npTab{paneQueue, "待播清单"}))
 	}
-	return []npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "待播清单"}, {paneWall, "选歌"}, {paneComments, "评论"}}
+	return a.appendPlatformNPTabs([]npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "待播清单"}, {paneWall, "选歌"}})
 }
 
 func (a *app) paneTabs(c *ui.Context) {

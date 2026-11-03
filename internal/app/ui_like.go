@@ -40,6 +40,9 @@ func (a *app) loadLiked(uid int64) {
 // and then with NetEase, which may refuse: the heart goes back then. Signed
 // out, it asks the listener to sign in.
 func (a *app) toggleLike(tr *netease.Track) {
+	if a.togglePlatformLike(tr) {
+		return
+	}
 	if a.profile == nil {
 		a.showMain()
 		a.openLogin()
@@ -91,6 +94,9 @@ func (a *app) toggleProgramLike(id int64) {
 
 // isLiked reports whether the listener likes tr, a song or an episode.
 func (a *app) isLiked(tr *netease.Track) bool {
+	if liked, ok := a.platformLiked(tr); ok {
+		return liked
+	}
 	if tr.ProgramID != 0 {
 		return a.likedPrograms[tr.ProgramID]
 	}
@@ -188,7 +194,7 @@ func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color u
 	liked := a.isLiked(tr)
 	icon, label := iconHeart, "喜欢"
 	if liked {
-		icon, color, label = iconHeartFill, a.pal.accent, "取消喜欢"
+		icon, color, label = iconHeartFill, a.pal.like, "取消喜欢"
 	}
 	// The burst goes on a wrapper, which the heart's pop does not scale.
 	wrap := ui.Box(c).Center()
@@ -199,7 +205,7 @@ func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color u
 	burst := ui.Local(wrap, "burst", func() time.Time { return time.Time{} })
 	if b.Clicked() {
 		switch {
-		case a.profile == nil:
+		case a.profile == nil && !a.platformLikeAllowed(tr):
 		case liked:
 			b.Jump("pop", 0.8)
 		default:

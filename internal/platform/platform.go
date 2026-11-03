@@ -22,6 +22,8 @@ const (
 	NeteaseID ID = "netease"
 	// FnmusicID identifies the fnOS/Feiniu Music platform.
 	FnmusicID ID = "fnmusic"
+	// QQMusicID identifies the QQ Music platform.
+	QQMusicID ID = "qqmusic"
 )
 
 // ListKind describes a list a provider can page through. The values are

@@ -31,6 +31,13 @@ type queuePlayer struct {
 }
 
 func (p *queuePlayer) Current() *netease.Track        { return nil }
+func (p *queuePlayer) Playing() bool                  { return false }
+func (p *queuePlayer) Loading() bool                  { return false }
+func (p *queuePlayer) Err() string                    { return "" }
+func (p *queuePlayer) TogglePlay()                    {}
+func (p *queuePlayer) Next()                          {}
+func (p *queuePlayer) Queue() []netease.Track         { return nil }
+func (p *queuePlayer) PlayOrder() ([]int, int)        { return nil, -1 }
 func (p *queuePlayer) PlayQueue([]netease.Track, int) {}
 func (p *queuePlayer) AppendQueue([]netease.Track)    {}
 func (p *queuePlayer) PlayList(ts []netease.Track, at int, f func(func([]netease.Track))) {

@@ -57,6 +57,7 @@ func (a *app) settingsView(c *ui.Context) {
 	}
 	t := *c.Theme()
 	p := paletteFor(&t)
+	a.platformAccent(&p)
 	t.Accent, t.AccentText = p.accent, p.onAccent
 	c.SetTheme(&t)
 	c.Root().Background(p.sidebar)

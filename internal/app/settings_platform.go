@@ -17,8 +17,10 @@ import (
 // provider-specific values remain neutral seam types; validation and
 // interpretation belong to the provider adapter.
 type platformSettings struct {
-	Platform string                       `json:"platform,omitempty"`
-	FnMusic  appplatform.PlatformSettings `json:"fnmusic,omitempty"`
+	Platform       string                       `json:"platform,omitempty"`
+	FnMusic        appplatform.PlatformSettings `json:"fnmusic,omitempty"`
+	QQMusic        appplatform.PlatformSettings `json:"qqmusic,omitempty"`
+	PlatformSearch map[string][]string          `json:"platformSearch,omitempty"`
 }
 
 func (a *app) platformSettingsGroup(c *ui.Context, group func(string, func()), row func(string, string, func())) {
@@ -78,6 +80,7 @@ func (a *app) setPlatform(id platform.ID) {
 	a.trackList, a.platformCardList = ui.ListState{}, ui.ListState{}
 	a.pageScroll, a.navScroll = ui.ScrollState{}, ui.ScrollState{}
 	a.platformHeroSince = time.Time{}
+	a.comments = commentState{}
 	a.platformMenuOpen = false
 	a.platformRoute = appplatform.Route{}
 	a.scrolled = route{}

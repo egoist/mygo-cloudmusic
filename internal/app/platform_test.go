@@ -51,30 +51,60 @@ func TestPlatformContextSwitch(t *testing.T) {
 	}
 }
 
+// Selecting QQ Music installs its player hooks and starts on its home page.
+func TestQQMusicPlatformContextSwitch(t *testing.T) {
+	a := newPlatformTestApp()
+	a.setPlatform(platform.QQMusicID)
+	if a.platformID != platform.QQMusicID || a.settings.Platform != string(platform.QQMusicID) {
+		t.Fatalf("QQ Music was not selected: id=%q setting=%q", a.platformID, a.settings.Platform)
+	}
+	if got := a.activeHome().Route().Page; got != "home" {
+		t.Fatalf("QQ Music home route = %q", got)
+	}
+	if a.pl.ResolveStream == nil || a.pl.Artwork == nil || a.pl.ResolveLyrics == nil {
+		t.Fatal("QQ Music player hooks were not installed")
+	}
+	a.setPlatform(platform.NeteaseID)
+	if a.pl.ResolveStream != nil {
+		t.Fatal("QQ Music player hooks survived switching back to NetEase")
+	}
+}
+
 // Shared platform settings enumerate adapter identities instead of hardcoding provider names.
 func TestPlatformInfosComeFromAdapters(t *testing.T) {
 	a := newPlatformTestApp()
 	infos := a.platformInfos()
-	if len(infos) != 2 {
-		t.Fatalf("platform count = %d, want 2", len(infos))
+	if len(infos) != 3 {
+		t.Fatalf("platform count = %d, want 3", len(infos))
 	}
 	if infos[0].ID != platform.NeteaseID || infos[0].Name != "网易云音乐" {
 		t.Fatalf("default platform = %#v", infos[0])
 	}
-	if infos[1].ID == platform.NeteaseID || infos[1].Name == "" {
-		t.Fatalf("adapter identity = %#v", infos[1])
+	for _, info := range infos[1:] {
+		if info.ID == platform.NeteaseID || info.Name == "" {
+			t.Fatalf("adapter identity = %#v", info)
+		}
 	}
 }
 
-// Platform capabilities keep NetEase-only settings out of Feiniu's settings page.
+// Platform capabilities keep NetEase-only settings out of adapters that do not
+// support them, while QQ Music keeps the playback rows it does share.
 func TestPlatformCapabilities(t *testing.T) {
 	a := newPlatformTestApp()
 	infos := a.platformInfos()
 	if !infos[0].Quality || !infos[0].Normalize || !infos[0].Podcasts || !infos[0].Comments {
 		t.Fatalf("NetEase capabilities = %#v", infos[0])
 	}
-	if infos[1].Quality || infos[1].Normalize || infos[1].Podcasts || infos[1].Comments {
-		t.Fatalf("Feiniu capabilities = %#v", infos[1])
+	for _, info := range infos[1:] {
+		if info.Podcasts {
+			t.Fatalf("NetEase-only capability leaked into adapter %#v", info)
+		}
+		if info.ID == platform.FnmusicID && (info.Quality || info.Normalize || info.Comments) {
+			t.Fatalf("optional capabilities leaked into Feiniu %#v", info)
+		}
+		if info.ID == platform.QQMusicID && (!info.Quality || !info.Normalize || !info.Comments) {
+			t.Fatalf("QQ Music lost its playback or comment settings %#v", info)
+		}
 	}
 }
 

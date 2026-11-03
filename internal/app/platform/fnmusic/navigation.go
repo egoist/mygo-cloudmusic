@@ -87,7 +87,7 @@ func (h *Home) Sidebar(c *ui.Context) {
 		status = "连接失败"
 	}
 	actions := h.accountActions()
-	h.host.AccountRow(c, iconServer, username, status, &h.accountOpen, actions)
+	h.host.AccountRow(c, iconServer, "", username, status, &h.accountOpen, actions)
 	h.host.PlatformSwitcher(c)
 }
 

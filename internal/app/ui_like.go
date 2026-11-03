@@ -194,7 +194,7 @@ func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color u
 	liked := a.isLiked(tr)
 	icon, label := iconHeart, "喜欢"
 	if liked {
-		icon, color, label = iconHeartFill, a.pal.accent, "取消喜欢"
+		icon, color, label = iconHeartFill, a.pal.like, "取消喜欢"
 	}
 	// The burst goes on a wrapper, which the heart's pop does not scale.
 	wrap := ui.Box(c).Center()

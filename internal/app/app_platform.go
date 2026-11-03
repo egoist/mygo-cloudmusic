@@ -115,6 +115,61 @@ func neteasePlatformInfo() appplatform.Info {
 	return appplatform.Info{ID: platform.NeteaseID, Name: "网易云音乐", Comments: true, Podcasts: true, Quality: true, Normalize: true}
 }
 
+// platformAccent applies the active platform's brand colour, if it has one,
+// over the shared palette. NetEase keeps the palette's own red.
+// platformPage translates a shared page route to the active platform's, so
+// artist and album links inside shared rows open the platform's pages.
+func (a *app) platformPage(r route) (appplatform.Route, bool) {
+	if a.activePlatform() == nil || a.platformID == platform.NeteaseID {
+		return appplatform.Route{}, false
+	}
+	switch r.page {
+	case pageArtist:
+		return appplatform.Route{Page: "artist", ID: r.id}, true
+	case pageAlbum:
+		return appplatform.Route{Page: "album", ID: r.id}, true
+	case pagePlaylist:
+		return appplatform.Route{Page: "playlist", ID: r.id}, true
+	case pageUser:
+		return appplatform.Route{Page: "user", ID: r.id}, true
+	case pageDaily:
+		return appplatform.Route{Page: "daily"}, true
+	case pageCharts:
+		return appplatform.Route{Page: "charts"}, true
+	case pageFM:
+		return appplatform.Route{Page: "fm"}, true
+	case pageSearch:
+		return appplatform.Route{Page: "search", Query: r.query}, true
+	}
+	return appplatform.Route{}, false
+}
+
+func (a *app) platformAccent(p *palette) {
+	if a == nil || p == nil {
+		return
+	}
+	if a.activePlatform() == nil {
+		return
+	}
+	if src, ok := a.activePlatform().(appplatform.Accent); ok {
+		p.accent, p.onAccent = src.AccentColor()
+	}
+}
+
+// platformComments returns the active platform's comment reader, if it has
+// one. NetEase keeps using the upstream loader.
+func (a *app) platformComments() appplatform.CommentSource {
+	if a == nil {
+		return nil
+	}
+	if p := a.activePlatform(); p != nil {
+		if src, ok := p.(appplatform.CommentSource); ok {
+			return src
+		}
+	}
+	return nil
+}
+
 func (a *app) commentsEnabled() bool {
 	if a == nil {
 		return true

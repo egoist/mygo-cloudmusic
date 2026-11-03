@@ -3,6 +3,7 @@ package app
 import (
 	appplatform "netease-music-mygo/internal/app/platform"
 	appfnmusic "netease-music-mygo/internal/app/platform/fnmusic"
+	appqqmusic "netease-music-mygo/internal/app/platform/qqmusic"
 	"netease-music-mygo/internal/platform"
 )
 
@@ -23,4 +24,5 @@ func newPlatformAdapters(a *app) {
 		a.platforms = map[platform.ID]appplatform.Adapter{}
 	}
 	a.platforms[platform.FnmusicID] = appfnmusic.NewAdapter(platformHost{a: a}, &a.settings.FnMusic, func() { _ = a.settings.save() })
+	a.platforms[platform.QQMusicID] = appqqmusic.NewAdapter(platformHost{a: a}, &a.settings.QQMusic, func() { _ = a.settings.save() })
 }

@@ -37,7 +37,7 @@ func (a *app) cardWidth(c *ui.Context) (int, float32) {
 func (a *app) sharedLikeButton(c *ui.Context, tr *netease.Track, liked bool, color ui.Color, favorite func(netease.Track, bool)) ui.Element {
 	icon, label := iconHeart, "喜欢"
 	if liked {
-		icon, label, color = iconHeartFill, "取消喜欢", a.pal.accent
+		icon, label, color = iconHeartFill, "取消喜欢", a.pal.like
 	}
 	b := iconButton(c, icon, 15, color, label)
 	if b.Clicked() && favorite != nil {

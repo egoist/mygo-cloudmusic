@@ -25,6 +25,10 @@ func (a *app) changeCacheDirectory(directory string, migrate bool) error {
 	if err != nil {
 		return err
 	}
+	same, err := cachemove.SameDirectory(source, target)
+	if err != nil || same {
+		return err
+	}
 	if err := cachemove.Validate(source, target); err != nil {
 		return err
 	}
@@ -94,6 +98,20 @@ func (a *app) confirmCacheDirectory(directory string) {
 	target, err := songCacheDirectory(directory)
 	if err != nil {
 		a.cacheError = err.Error()
+		return
+	}
+	source, err := songCacheDirectory(a.settings.CacheDir)
+	if err != nil {
+		a.cacheError = err.Error()
+		return
+	}
+	same, err := cachemove.SameDirectory(source, target)
+	if err != nil {
+		a.cacheError = err.Error()
+		return
+	}
+	if same {
+		a.cacheConfirm.open = false
 		return
 	}
 	a.cacheConfirm = cacheDirectoryConfirmation{open: true, directory: directory, target: target}

@@ -29,8 +29,7 @@ func TestCacheDirectoryConfirmationFrames(t *testing.T) {
 		{"error", false, 480, 420, `D:\` + strings.Repeat(`很长的音乐缓存目录\`, 12), "新缓存目录必须为空，请选择其他目录。"},
 	} {
 		a, _, _ := cacheTestApp(t)
-		a.confirmCacheDirectory(scene.target)
-		a.cacheConfirm.err = scene.err
+		a.cacheConfirm = cacheDirectoryConfirmation{open: true, directory: scene.target, target: scene.target, err: scene.err}
 		tt := ui.NewTester(func(c *ui.Context) {
 			theme := ui.LightTheme()
 			if scene.dark {

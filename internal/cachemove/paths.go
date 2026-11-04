@@ -9,6 +9,37 @@ import (
 	"strings"
 )
 
+// SameDirectory compares normalized paths and, when present, filesystem identities.
+// It also recognizes directory links and platform-specific aliases of existing paths.
+func SameDirectory(source, target string) (bool, error) {
+	source, err := resolve(source)
+	if err != nil {
+		return false, err
+	}
+	target, err = resolve(target)
+	if err != nil {
+		return false, err
+	}
+	if rel, err := filepath.Rel(source, target); err == nil && rel == "." {
+		return true, nil
+	}
+	src, err := os.Stat(source)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	dst, err := os.Stat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(src, dst), nil
+}
+
 // Paths resolves links, including links in an existing parent, and rejects
 // overlapping directories. It does not create either directory.
 func Paths(source, target string) (string, string, error) {

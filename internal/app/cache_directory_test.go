@@ -5,6 +5,8 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +105,38 @@ func TestCacheDirectoryControls(t *testing.T) {
 	saved := readCacheSettings(t, a.settings.path)
 	if a.cacheError != "" || saved.CacheDir != target {
 		t.Fatalf("change failed: %s %+v", a.cacheError, saved)
+	}
+}
+
+// Selecting the active directory again neither opens confirmation nor pauses, moves or saves anything.
+func TestCacheDirectorySameDirectory(t *testing.T) {
+	a, source, _ := cacheTestApp(t)
+	writeCachedSong(t, source)
+	cache := a.pl.Cache
+	oldOpen := openCacheDirectory
+	defer func() { openCacheDirectory = oldOpen }()
+	targets := []string{source, source + string(filepath.Separator) + "."}
+	if runtime.GOOS == "windows" {
+		targets = append(targets, strings.ToUpper(source))
+	}
+	for _, target := range targets {
+		openCacheDirectory = func(mygo.OpenDialogOptions) ([]string, error) { return []string{target}, nil }
+		tt := ui.NewTester(a.settingsView, 800, 1800)
+		if err := tt.Click("更改歌曲缓存目录"); err != nil {
+			t.Fatal(err)
+		}
+		if a.cacheConfirm.open || a.cacheMoving || a.cacheError != "" || a.settings.CacheDir != source || a.pl.Cache != cache {
+			t.Fatalf("selecting current directory changed state: %s", target)
+		}
+		if err := a.changeCacheDirectory(target, true); err != nil || a.cacheMoving || a.pl.Cache != cache {
+			t.Fatalf("same-directory change was not a no-op: %v", err)
+		}
+	}
+	if cache.Size() != 5 {
+		t.Fatal("existing cache was modified")
+	}
+	if _, err := os.Stat(a.settings.path); !os.IsNotExist(err) {
+		t.Fatalf("no-op saved settings: %v", err)
 	}
 }
 

@@ -322,8 +322,8 @@ func (p *Player) Current() *netease.Track { return p.track }
 // Queue returns the tracks queued, in the order they were given.
 func (p *Player) Queue() []netease.Track { return p.queue }
 
-// Playing reports playback, including the temporary pause during cache migration.
-func (p *Player) Playing() bool { return p.playing && !p.cacheChanging }
+// Playing reports what the listener wants: false while paused.
+func (p *Player) Playing() bool { return p.playing }
 
 // Loading reports whether the current track is still loading.
 func (p *Player) Loading() bool { return p.loading || p.awaiting }

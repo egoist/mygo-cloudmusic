@@ -139,7 +139,7 @@ func TestSuspendCacheResume(t *testing.T) {
 		waitCachePlayer(t, p, posts)
 		resume := p.SuspendCache()
 		position := p.Position()
-		if p.Ready() || p.Playing() || position < 250*time.Millisecond {
+		if p.Ready() || p.Playing() != playing || position < 250*time.Millisecond {
 			t.Fatal("did not suspend at current position")
 		}
 		p.Cache.Quiesce()

@@ -15,7 +15,7 @@ import (
 
 // Move copies complete song/metadata pairs to a staging directory on the
 // target disk, publishes it, and saves the setting before removing old files.
-// It must run before playback starts. A failed copy or save leaves the source
+// Cache readers and writers must be stopped. A failed copy or save leaves the source
 // intact. The first error is only a cleanup warning: the new setting is saved.
 // A process interrupted before save may leave a populated target; a later
 // attempt rejects it rather than overwriting files or deleting the source.

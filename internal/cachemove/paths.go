@@ -1,4 +1,4 @@
-// Package cachemove relocates a song cache before the player opens any files.
+// Package cachemove relocates a song cache whose readers and writers are stopped.
 package cachemove
 
 import (

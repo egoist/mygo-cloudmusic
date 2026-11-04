@@ -41,15 +41,17 @@ type download struct {
 	// users counts what reads or writes the song: the stream decoding it,
 	// until it closes, and the goroutine fetching it. The last to go
 	// closes the file, and removes it unless the cache kept it.
-	users  int
-	closed bool
+	users     int
+	closed    bool
+	finished  chan struct{} // the network writer has stopped
+	onRelease func()        // removes a file-backed download from its cache
 }
 
 // startDownload fetches url, of size bytes if known, into part, a file
 // that keep keeps once it has all come in: or into memory, without one.
 func startDownload(url string, size int64, part *os.File, keep func(string, int64) (string, bool)) *download {
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &download{size: size, cancel: cancel, users: 2}
+	d := &download{size: size, cancel: cancel, users: 2, finished: make(chan struct{})}
 	d.cond.L = &d.mu
 	switch {
 	case part != nil:
@@ -84,6 +86,7 @@ func opened(f *os.File, size int64) *download {
 }
 
 func (d *download) run(ctx context.Context, url string) {
+	defer close(d.finished)
 	defer d.release()
 	finish := func(err error) {
 		d.mu.Lock()
@@ -200,7 +203,7 @@ func (d *download) Close() {
 func (d *download) share() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.users <= 0 {
+	if d.users <= 0 || d.closed {
 		return false
 	}
 	d.users++
@@ -222,6 +225,29 @@ func (d *download) release() {
 		os.Remove(d.part)
 	}
 	d.file, d.data, d.n, d.part = nil, nil, 0, ""
+	if d.onRelease != nil {
+		d.onRelease()
+	}
+}
+
+// halt waits for the writer, then invalidates even shared decoders so none can
+// hold an old cache file open during migration. Readers access files under mu.
+func (d *download) halt() {
+	d.Close()
+	if d.finished != nil {
+		<-d.finished
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.file != nil {
+		d.file.Close()
+	}
+	if d.part != "" {
+		os.Remove(d.part)
+	}
+	d.file, d.data, d.n, d.part = nil, nil, 0, ""
+	d.done, d.err = true, context.Canceled
+	d.cond.Broadcast()
 }
 
 // Progress returns the share of the song downloaded so far.

@@ -20,8 +20,10 @@ import (
 type Cache struct {
 	dir string
 
-	mu    sync.Mutex
-	limit int64 // in bytes; 0 keeps nothing
+	mu      sync.Mutex
+	limit   int64 // in bytes; 0 keeps nothing
+	blocked bool
+	active  map[*download]struct{}
 }
 
 // NewCache returns a cache in dir of limit bytes.
@@ -33,8 +35,10 @@ func NewCache(dir string, limit int64) *Cache {
 func (c *Cache) SetLimit(limit int64) {
 	c.mu.Lock()
 	c.limit = limit
+	if !c.blocked {
+		c.pruneLocked("")
+	}
 	c.mu.Unlock()
-	c.prune("")
 }
 
 func cacheKey(id int64, level string) string { return fmt.Sprintf("%d-%s", id, level) }
@@ -49,6 +53,11 @@ func keepable(level, ext string) bool {
 // its stream.
 func (c *Cache) lookup(id int64, level string) (*download, *netease.Stream, bool) {
 	if c == nil {
+		return nil, nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.blocked {
 		return nil, nil, false
 	}
 	at := max(slices.Index(netease.Levels, level), 0)
@@ -74,7 +83,9 @@ func (c *Cache) lookup(id int64, level string) (*download, *netease.Stream, bool
 		// Played now: the last to go.
 		now := time.Now()
 		os.Chtimes(path, now, now)
-		return opened(f, st.Size), &st, true
+		dl := opened(f, st.Size)
+		c.track(dl)
+		return dl, &st, true
 	}
 	return nil, nil, false
 }
@@ -82,13 +93,20 @@ func (c *Cache) lookup(id int64, level string) (*download, *netease.Stream, bool
 // download fetches the song of the stream st into a file, to keep once it
 // has all come in; or into memory, if the cache would not keep it.
 func (c *Cache) download(id int64, st *netease.Stream) *download {
-	part := c.part(st)
+	if c == nil {
+		return startDownload(st.URL, st.Size, nil, nil)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	part := c.partLocked(st)
 	if part == nil {
 		return startDownload(st.URL, st.Size, nil, nil)
 	}
-	return startDownload(st.URL, st.Size, part, func(path string, n int64) (string, bool) {
+	dl := startDownload(st.URL, st.Size, part, func(path string, n int64) (string, bool) {
 		return c.keep(id, st, path, n)
 	})
+	c.track(dl)
+	return dl
 }
 
 // part makes a file for a song of the stream st to come into, or returns
@@ -99,8 +117,15 @@ func (c *Cache) part(st *netease.Stream) *os.File {
 		return nil
 	}
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.partLocked(st)
+}
+
+func (c *Cache) partLocked(st *netease.Stream) *os.File {
+	if c.blocked {
+		return nil
+	}
 	limit := c.limit
-	c.mu.Unlock()
 	// A song of more than a quarter of it would push out too many.
 	if limit <= 0 || st.Size > limit/4 {
 		return nil
@@ -120,9 +145,8 @@ func (c *Cache) part(st *netease.Stream) *os.File {
 // song is: kept, or still at part.
 func (c *Cache) keep(id int64, st *netease.Stream, part string, n int64) (string, bool) {
 	c.mu.Lock()
-	limit := c.limit
-	c.mu.Unlock()
-	if n > limit/4 {
+	defer c.mu.Unlock()
+	if c.blocked || n > c.limit/4 {
 		return part, false
 	}
 	kept := *st
@@ -140,12 +164,17 @@ func (c *Cache) keep(id int64, st *netease.Stream, part string, n int64) (string
 		return part, false
 	}
 	os.WriteFile(filepath.Join(c.dir, key+".json"), meta, 0o600)
-	c.prune(path)
+	c.pruneLocked(path)
 	return path, true
 }
 
 // Size returns how many bytes the songs kept take.
 func (c *Cache) Size() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.blocked {
+		return 0
+	}
 	var n int64
 	for _, f := range c.songs() {
 		n += f.size
@@ -155,6 +184,11 @@ func (c *Cache) Size() int64 {
 
 // Clear drops every song kept.
 func (c *Cache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.blocked {
+		return
+	}
 	for _, f := range c.songs() {
 		c.remove(f.path)
 	}
@@ -190,9 +224,7 @@ func (c *Cache) remove(path string) {
 
 // prune drops the songs played longest ago until the rest fit the limit,
 // but keep, the song just kept.
-func (c *Cache) prune(keep string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Cache) pruneLocked(keep string) {
 	c.dropParts()
 	songs := c.songs()
 	slices.SortFunc(songs, func(a, b cachedSong) int { return a.used.Compare(b.used) })

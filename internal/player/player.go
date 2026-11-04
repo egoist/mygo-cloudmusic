@@ -62,6 +62,8 @@ type Player struct {
 	err     string
 	gen     int // counts loads, to drop the results of stale ones
 
+	cacheChanging bool
+
 	lyrics       []lyrics.Line
 	lyricsLoaded bool
 
@@ -108,7 +110,7 @@ func (p *Player) sync() {
 		return
 	}
 	state := mygo.PlaybackPaused
-	if p.playing {
+	if p.playing && !p.cacheChanging {
 		state = mygo.PlaybackPlaying
 	}
 	mygo.NowPlaying.SetPlayback(state, p.Position())
@@ -117,7 +119,7 @@ func (p *Player) sync() {
 // announce shows the system the track, and its cover once loaded.
 func (p *Player) announce(t *netease.Track, artwork []byte) {
 	state := mygo.PlaybackPaused
-	if p.playing {
+	if p.playing && !p.cacheChanging {
 		state = mygo.PlaybackPlaying
 	}
 	mygo.NowPlaying.Set(mygo.NowPlayingInfo{
@@ -320,8 +322,8 @@ func (p *Player) Current() *netease.Track { return p.track }
 // Queue returns the tracks queued, in the order they were given.
 func (p *Player) Queue() []netease.Track { return p.queue }
 
-// Playing reports what the listener wants: false while paused.
-func (p *Player) Playing() bool { return p.playing }
+// Playing reports playback, including the temporary pause during cache migration.
+func (p *Player) Playing() bool { return p.playing && !p.cacheChanging }
 
 // Loading reports whether the current track is still loading.
 func (p *Player) Loading() bool { return p.loading || p.awaiting }
@@ -421,6 +423,11 @@ func (p *Player) Jump(i int) {
 
 // TogglePlay pauses, fading out, or plays, fading in.
 func (p *Player) TogglePlay() {
+	if p.cacheChanging {
+		p.playing = !p.playing
+		p.sync()
+		return
+	}
 	if p.out == nil {
 		switch {
 		case p.loading:
@@ -588,6 +595,9 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.lyrics, p.lyricsLoaded = nil, false
 	p.pending = from
 	p.announce(&t, nil)
+	if p.cacheChanging {
+		return
+	}
 	p.refill()
 
 	go func() {
@@ -614,12 +624,13 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			}
 		})
 	}()
+	cache := p.Cache
+	level := "exhigh"
+	if p.Quality != nil {
+		level = p.Quality()
+	}
 	go func() {
-		level := "exhigh"
-		if p.Quality != nil {
-			level = p.Quality()
-		}
-		info, s, err := p.open(t, level)
+		info, s, err := cache.open(t, level)
 		p.post(func() {
 			if gen != p.gen {
 				if s != nil {
@@ -682,15 +693,15 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 
 // open opens track t's audio at level: kept in the cache, or else
 // streamed into it, and kept once it has all come in.
-func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, error) {
-	dl, info, ok := p.Cache.lookup(t.ID, level)
+func (c *Cache) open(t netease.Track, level string) (*netease.Stream, stream, error) {
+	dl, info, ok := c.lookup(t.ID, level)
 	if !ok {
 		var err error
 		info, err = netease.SongURL(t.ID, level)
 		if err != nil {
 			return nil, nil, err
 		}
-		dl = p.Cache.download(t.ID, info)
+		dl = c.download(t.ID, info)
 	}
 	s, err := openStream(dl, t.Duration)
 	if err != nil {

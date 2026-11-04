@@ -159,6 +159,27 @@ func (a *app) settingsView(c *ui.Context) {
 		}
 
 		group("缓存", func() {
+			row("歌曲缓存目录", a.cacheDirectoryDescription(), func() {
+				if ui.Button(c.Key("cache-directory"), "更改…").Label("更改歌曲缓存目录").Clicked() {
+					a.chooseCacheDirectory()
+				}
+			})
+			if s.CacheChange != nil {
+				row("待更改目录", "下次启动时执行；失败时仍使用原目录", func() {
+					if ui.Button(c.Key("cancel-cache-directory"), "取消更改").Clicked() {
+						if err := a.cancelCacheDirectoryChange(); err != nil {
+							a.cacheError = err.Error()
+						}
+					}
+				})
+			}
+			if s.CacheDir != "" {
+				row("默认缓存目录", "恢复到系统默认位置，下次启动时生效", func() {
+					if ui.Button(c.Key("reset-cache-directory"), "恢复默认").Label("恢复默认歌曲缓存目录").Clicked() {
+						a.confirmCacheDirectory("")
+					}
+				})
+			}
 			row("歌曲缓存", "听过的歌曲保存在本机，再次播放无需等待，也不耗流量；"+a.cacheUsage(), func() {
 				labels := make([]string, len(cacheLimits))
 				chosen := cacheLimits[2].label

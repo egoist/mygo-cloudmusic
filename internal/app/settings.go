@@ -61,6 +61,10 @@ type settings struct {
 	// CacheMB is how many megabytes the songs kept on disk may take; 0
 	// keeps none.
 	CacheMB int `json:"cacheMB"`
+	// CacheDir is the song cache directory; empty uses the system default.
+	CacheDir string `json:"cacheDir,omitempty"`
+	// CacheChange is applied before the player opens files on the next start.
+	CacheChange *cacheDirectoryChange `json:"cacheChange,omitempty"`
 	// SearchHistory keeps submitted keywords, most recent first.
 	SearchHistory []string `json:"searchHistory,omitempty"`
 
@@ -142,7 +146,23 @@ func (s settings) save() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	f, err := os.CreateTemp(filepath.Dir(path), ".settings-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // applyAppearance makes the windows light, dark, or follow the system.

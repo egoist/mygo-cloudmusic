@@ -139,8 +139,9 @@ type app struct {
 
 	settings    settings
 	settingsWin *mygo.Window
-	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
-	updates     bool  // the update plugin is used (useUpdater)
+	cacheUsed   int64  // the bytes the song cache takes, -1 until measured
+	cacheError  string // a directory change failed or left old files behind
+	updates     bool   // the update plugin is used (useUpdater)
 
 	restored     bool   // playback picked up where it was left
 	savedSession string // the session as last kept
@@ -203,6 +204,7 @@ func Run() error {
 	a.useUpdater()
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
+		a.applyCacheDirectoryChange()
 		a.settings.applyAppearance()
 		a.npPane = a.lyricsPaneChosen()
 		// Before the window: on Windows it lays out its content as it is
@@ -211,7 +213,7 @@ func Run() error {
 		a.pl = player.New(a.post)
 		a.pl.Quality = func() string { return a.settings.Quality }
 		a.pl.Normalize = func() bool { return a.settings.Normalize }
-		a.pl.Cache = newSongCache(a.settings.CacheMB)
+		a.pl.Cache = newSongCache(a.settings.CacheMB, a.settings.CacheDir)
 		a.pl.Changed = func() {
 			a.keepSession()
 			a.syncCaptions()

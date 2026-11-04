@@ -74,21 +74,26 @@ func writeCachedSong(t *testing.T, source string) {
 	}
 }
 
-// Choosing a directory starts a background change immediately, and prevents a second change.
+// Choosing a directory waits for in-app confirmation, then starts one immediate background change.
 func TestCacheDirectoryControls(t *testing.T) {
 	a, source, target := cacheTestApp(t)
 	posts := cachePosts(t)
-	oldOpen, oldAsk := openCacheDirectory, askCacheDirectory
-	defer func() { openCacheDirectory, askCacheDirectory = oldOpen, oldAsk }()
+	oldOpen := openCacheDirectory
+	defer func() { openCacheDirectory = oldOpen }()
 	opens := 0
 	openCacheDirectory = func(mygo.OpenDialogOptions) ([]string, error) { opens++; return []string{target}, nil }
-	askCacheDirectory = func(mygo.MessageOptions) (mygo.MessageResult, error) { return mygo.MessageResult{Button: 1}, nil }
 	tt := ui.NewTester(a.settingsView, 800, 1800)
 	if err := tt.Click("更改歌曲缓存目录"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.cacheMoving || a.settings.CacheDir != source {
-		t.Fatal("did not start safely in background")
+	if !a.cacheConfirm.open || a.cacheMoving || a.settings.CacheDir != source {
+		t.Fatal("started changing before confirmation")
+	}
+	if err := tt.Click("迁移并更改"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.cacheMoving || a.cacheConfirm.open || a.settings.CacheDir != source {
+		t.Fatal("did not start safely after confirmation")
 	}
 	a.chooseCacheDirectory()
 	if opens != 1 {
@@ -101,24 +106,35 @@ func TestCacheDirectoryControls(t *testing.T) {
 	}
 }
 
-// Canceling either native dialog leaves both settings and the live cache unchanged.
+// Canceling the folder picker or dismissing confirmation by button or Escape leaves the live cache unchanged.
 func TestCacheDirectoryDialogCancel(t *testing.T) {
-	for _, cancelPicker := range []bool{true, false} {
-		a, source, target := cacheTestApp(t)
-		cache := a.pl.Cache
-		oldOpen, oldAsk := openCacheDirectory, askCacheDirectory
-		openCacheDirectory = func(mygo.OpenDialogOptions) ([]string, error) {
-			if cancelPicker {
-				return nil, nil
+	for _, cancel := range []string{"picker", "button", "escape"} {
+		t.Run(cancel, func(t *testing.T) {
+			a, source, target := cacheTestApp(t)
+			cache := a.pl.Cache
+			oldOpen := openCacheDirectory
+			defer func() { openCacheDirectory = oldOpen }()
+			openCacheDirectory = func(mygo.OpenDialogOptions) ([]string, error) {
+				if cancel == "picker" {
+					return nil, nil
+				}
+				return []string{target}, nil
 			}
-			return []string{target}, nil
-		}
-		askCacheDirectory = func(mygo.MessageOptions) (mygo.MessageResult, error) { return mygo.MessageResult{Button: 0}, nil }
-		a.chooseCacheDirectory()
-		openCacheDirectory, askCacheDirectory = oldOpen, oldAsk
-		if a.settings.CacheDir != source || a.cacheMoving || a.pl.Cache != cache {
-			t.Fatal("cancel changed active cache")
-		}
+			tt := ui.NewTester(a.settingsView, 800, 1800)
+			if err := tt.Click("更改歌曲缓存目录"); err != nil {
+				t.Fatal(err)
+			}
+			if cancel == "button" {
+				if err := tt.Click("取消"); err != nil {
+					t.Fatal(err)
+				}
+			} else if cancel == "escape" {
+				tt.Key(0, ui.KeyEscape)
+			}
+			if a.cacheConfirm.open || a.settings.CacheDir != source || a.cacheMoving || a.pl.Cache != cache {
+				t.Fatal("cancel changed active cache")
+			}
+		})
 	}
 }
 
@@ -156,7 +172,9 @@ func TestCacheDirectoryWithoutMigration(t *testing.T) {
 	a, source, target := cacheTestApp(t)
 	posts := cachePosts(t)
 	writeCachedSong(t, source)
-	if err := a.changeCacheDirectory(target, false); err != nil {
+	a.confirmCacheDirectory(target)
+	tt := ui.NewTester(a.settingsView, 560, 720)
+	if err := tt.Click("仅更改目录"); err != nil {
 		t.Fatal(err)
 	}
 	finishCacheChange(t, a, posts)
@@ -201,6 +219,35 @@ func TestCacheDirectoryRejectsOccupied(t *testing.T) {
 	}
 	if a.cacheMoving || a.settings.CacheDir != source {
 		t.Fatal("invalid target changed live state")
+	}
+}
+
+// A validation failure keeps confirmation open and does not activate or modify an occupied target.
+func TestCacheDirectoryConfirmationFailure(t *testing.T) {
+	a, source, target := cacheTestApp(t)
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	personal := filepath.Join(target, "personal.txt")
+	if err := os.WriteFile(personal, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.confirmCacheDirectory(target)
+	tt := ui.NewTester(a.settingsView, 480, 420)
+	if err := tt.Click("迁移并更改"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.cacheConfirm.open || a.cacheConfirm.err == "" || a.cacheMoving || a.settings.CacheDir != source {
+		t.Fatal("validation failure dismissed confirmation or changed cache")
+	}
+	if data, err := os.ReadFile(personal); err != nil || string(data) != "keep" {
+		t.Fatal("occupied target was modified")
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	if a.cacheConfirm.open {
+		t.Fatal("cannot dismiss failed confirmation")
 	}
 }
 

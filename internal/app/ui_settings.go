@@ -33,6 +33,7 @@ func (a *app) openSettings() {
 		Content:         ui.View(a.settingsView),
 	})
 	a.settingsWin.OnClosed(func() {
+		a.cacheConfirm.open = false
 		a.settingsWin = nil
 		a.syncDock()
 	})
@@ -276,4 +277,5 @@ func (a *app) settingsView(c *ui.Context) {
 			})
 		}
 	})
+	a.cacheDirectoryDialog(c, p)
 }

@@ -137,13 +137,14 @@ type app struct {
 	sig                   playerSig
 	quitting              bool
 
-	settings    settings
-	settingsWin *mygo.Window
-	cacheUsed   int64  // the bytes the song cache takes, -1 until measured
-	cacheError  string // a directory change failed or left old files behind
-	cacheMoving bool
-	cacheTarget string
-	updates     bool // the update plugin is used (useUpdater)
+	settings     settings
+	settingsWin  *mygo.Window
+	cacheUsed    int64  // the bytes the song cache takes, -1 until measured
+	cacheError   string // a directory change failed or left old files behind
+	cacheMoving  bool
+	cacheTarget  string
+	cacheConfirm cacheDirectoryConfirmation
+	updates      bool // the update plugin is used (useUpdater)
 
 	restored     bool   // playback picked up where it was left
 	savedSession string // the session as last kept

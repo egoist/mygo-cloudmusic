@@ -9,7 +9,6 @@ import (
 )
 
 var openCacheDirectory = mygo.Dialog.Open
-var askCacheDirectory = mygo.Dialog.Message
 var postCacheDirectory = func(a *app, fn func()) { a.post(fn) }
 
 // changeCacheDirectory suspends playback now and moves files off the UI thread.
@@ -97,22 +96,16 @@ func (a *app) confirmCacheDirectory(directory string) {
 		a.cacheError = err.Error()
 		return
 	}
-	result, err := askCacheDirectory(mygo.MessageOptions{
-		Parent: a.settingsWin, Type: mygo.MessageQuestion, Title: "更改歌曲缓存目录",
-		Message: "立即使用新目录，是否迁移已有歌曲缓存？",
-		Detail:  fmt.Sprintf("新目录：%s\n更改期间暂时停止播放，完成后恢复播放进度。迁移成功并保存设置后才清理旧缓存；不迁移则保留旧文件。请选择空目录；迁移期间请勿打开另一个应用实例。", target),
-		Buttons: []string{"取消", "迁移并更改", "仅更改目录"}, DefaultButton: 1, CancelButton: 0,
-	})
-	if err != nil {
-		a.cacheError = err.Error()
+	a.cacheConfirm = cacheDirectoryConfirmation{open: true, directory: directory, target: target}
+}
+
+func (a *app) submitCacheDirectory(migrate bool) {
+	d := &a.cacheConfirm
+	if err := a.changeCacheDirectory(d.directory, migrate); err != nil {
+		d.err = err.Error()
 		return
 	}
-	if result.Button != 1 && result.Button != 2 {
-		return
-	}
-	if err := a.changeCacheDirectory(directory, result.Button == 1); err != nil {
-		a.cacheError = err.Error()
-	}
+	d.open = false
 }
 
 func (a *app) cacheDirectoryDescription() string {

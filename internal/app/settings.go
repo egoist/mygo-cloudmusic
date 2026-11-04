@@ -63,8 +63,6 @@ type settings struct {
 	CacheMB int `json:"cacheMB"`
 	// CacheDir is the song cache directory; empty uses the system default.
 	CacheDir string `json:"cacheDir,omitempty"`
-	// CacheChange is applied before the player opens files on the next start.
-	CacheChange *cacheDirectoryChange `json:"cacheChange,omitempty"`
 	// SearchHistory keeps submitted keywords, most recent first.
 	SearchHistory []string `json:"searchHistory,omitempty"`
 

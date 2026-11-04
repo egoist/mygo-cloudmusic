@@ -29,11 +29,15 @@ func songCacheDirectory(configured string) (string, error) {
 
 // applyCacheLimit gives the cache the limit the settings say.
 func (a *app) applyCacheLimit() {
+	if a.cacheMoving {
+		return
+	}
 	if cache := a.pl.Cache; cache != nil {
 		limit := int64(a.settings.CacheMB) << 20
 		go func() {
 			cache.SetLimit(limit)
-			a.measureCache()
+			n := cache.Size()
+			a.post(func() { a.cacheMeasured(cache, n) })
 		}()
 	}
 }
@@ -47,21 +51,31 @@ func (a *app) measureCache() {
 	}
 	go func() {
 		n := cache.Size()
-		a.post(func() {
-			a.cacheUsed = n
-			if a.settingsWin != nil {
-				a.settingsWin.Invalidate()
-			}
-		})
+		a.post(func() { a.cacheMeasured(cache, n) })
 	}()
 }
 
+// cacheMeasured ignores results from an old cache after a directory switch.
+func (a *app) cacheMeasured(cache *player.Cache, n int64) {
+	if a.cacheMoving || a.pl.Cache != cache {
+		return
+	}
+	a.cacheUsed = n
+	if a.settingsWin != nil {
+		a.settingsWin.Invalidate()
+	}
+}
+
 func (a *app) clearCache() {
+	if a.cacheMoving {
+		return
+	}
 	if cache := a.pl.Cache; cache != nil {
 		a.cacheUsed = 0
 		go func() {
 			cache.Clear()
-			a.measureCache()
+			n := cache.Size()
+			a.post(func() { a.cacheMeasured(cache, n) })
 		}()
 	}
 }
